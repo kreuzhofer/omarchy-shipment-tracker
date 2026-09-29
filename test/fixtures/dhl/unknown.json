@@ -1,0 +1,45 @@
+{
+  "sendungen": [
+    {
+      "id": "00340434000000000011",
+      "hasCompleteDetails": true,
+      "sendungsinfo": {
+        "gesuchteSendungsnummer": "00340434000000000011",
+        "sendungsrichtung": "ANKOMMEND"
+      },
+      "sendungsdetails": {
+        "sendungsnummern": {
+          "sendungsnummer": "00340434000000000011"
+        },
+        "sendungsverlauf": {
+          "fortschritt": 0,
+          "maximalFortschritt": 5,
+          "farbe": 0,
+          "events": []
+        },
+        "services": {
+          "statusbenachrichtigung": {
+            "nullProzentAnkuendigung": true
+          }
+        },
+        "istZugestellt": false,
+        "ruecksendung": false,
+        "retoure": false,
+        "expressSendung": false,
+        "quelle": "PAKET",
+        "unplausibel": false,
+        "invalidTimeOfDay": false,
+        "isShipperPlz": false,
+        "showQualityLevelHint": false,
+        "twoManHandling": false
+      },
+      "versandDatumBenoetigt": false,
+      "sendungNichtGefunden": {
+        "keineDatenVerfuegbar": true
+      },
+      "paeckchen": false
+    }
+  ],
+  "mergedAnonymousShipmentListIds": [],
+  "rateLimited": false
+}
