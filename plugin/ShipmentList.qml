@@ -186,7 +186,7 @@ Column {
       anchors.horizontalCenter: parent.horizontalCenter
       horizontalAlignment: Text.AlignHCenter
       wrapMode: Text.WordWrap
-      text: "Paste a DHL tracking number below to track it."
+      text: "Paste a DHL tracking number or an Amazon order ID below to track it."
       color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.bodySmall
     }
   }
@@ -208,7 +208,7 @@ Column {
     TextField {
       id: addField
       width: parent.width - addButton.width - bell.width - Style.space(12)
-      placeholderText: "Add tracking number"
+      placeholderText: "Add tracking number or Amazon order ID"
       foreground: root.fg
       font.family: root.ff
       font.pixelSize: Style.font.bodySmall

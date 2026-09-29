@@ -42,10 +42,8 @@ Item {
       known[s.key] = true
       if (s.trackingNumber) known["dhl:" + s.trackingNumber] = true
     })
-    var queued = queuedAdds.filter(function(p) { return !known["dhl:" + p.id] }).map(function(p) {
-      return { key: "queued:" + p.id, direction: "Incoming", source: "DHL", account: null, carrier: "DHL",
-        title: p.id, status: "Unknown", estimate: { text: "Looking up…" }, delayed: false,
-        url: Shipments.dhlTrackingUrl(p.id), changedAt: p.at, discoveredAt: p.at }
+    var queued = queuedAdds.filter(function(p) { return !known[Shipments.manualKey(p.id)] }).map(function(p) {
+      return Shipments.queuedRow(p.id, p.at)
     })
     return queued.concat(rows).sort(Shipments.byUrgency)
   }

@@ -69,12 +69,11 @@ test("adding the same number twice keeps one Shipment", async (t) => {
   assert.equal(file.shipments[0].discoveredAt, "2026-09-29T10:00:00.000Z");
 });
 
-test("add rejects input that isn't a tracking number, and Amazon Order IDs for now", async (t) => {
+test("add rejects input that isn't a tracking number or an Amazon Order ID", async (t) => {
   const world = await makeWorld();
   t.after(() => world.cleanup());
 
   assert.equal(await world.run("add", "not a number!"), 2);
-  assert.equal(await world.run("add", "302-0000000-0000000"), 2);
   assert.equal(await world.run("add"), 2);
 
   assert.deepEqual((await world.shipmentsFile().catch(() => ({ shipments: [] }))).shipments, []);

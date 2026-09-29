@@ -9,7 +9,8 @@ const TRACKING_NUMBER = /^[A-Z0-9]{8,40}$/;
 // What the user typed into the add field → { kind, id } or { error }.
 export function parseManualId(input) {
   const raw = String(input ?? "").trim();
-  if (AMAZON_ORDER_ID.test(raw)) return { error: "Amazon Order IDs can't be tracked yet." };
+  // The format decides the Source: an Amazon Order ID, else a DHL number.
+  if (AMAZON_ORDER_ID.test(raw)) return { kind: "amazon", id: raw };
   const id = raw.replace(/\s+/g, "").toUpperCase();
   if (!TRACKING_NUMBER.test(id)) return { error: "That doesn't look like a tracking number." };
   return { kind: "dhl", id };

@@ -6,6 +6,7 @@
 // Local time (Amazon's quiet hours, Estimate days) uses env.TZ when set.
 // Logs carry counts and Health only, never tracking numbers, names or addresses.
 import { addAccount, loginAmazon, removeAccount } from "./amazon/connection.mjs";
+import { addManualOrder } from "./amazon/manual.mjs";
 import { login as loginDhl } from "./login.mjs";
 import { findByTrackingNumber } from "./merge.mjs";
 import { refresh } from "./refresh.mjs";
@@ -14,7 +15,7 @@ import { stateDirFor, updateState } from "./state.mjs";
 import { install, uninstall } from "./systemd.mjs";
 
 const USAGE = `usage: shipment-tracker <command>
-  add <trackingNumber>   track a DHL tracking number by hand
+  add <id>               track a DHL tracking number or an Amazon Order ID by hand
   remove <shipmentKey>   stop tracking a Shipment added by hand
   login dhl              log in to dhl.de in a dedicated Chrome window, then sync
   login amazon:<label>   sign in to that account in its own Chrome window
@@ -61,7 +62,7 @@ export async function main(argv, deps) {
 
 async function add(args, stateDir, { now, log, out }) {
   if (args.length !== 1) {
-    log("usage: shipment-tracker add <trackingNumber>");
+    log("usage: shipment-tracker add <trackingNumber|orderId>");
     return 2;
   }
   const parsed = parseManualId(args[0]);
@@ -70,6 +71,7 @@ async function add(args, stateDir, { now, log, out }) {
     return 2;
   }
   const added = await updateState(stateDir, ({ shipments }) => {
+    if (parsed.kind === "amazon") return addManualOrder(shipments.shipments, parsed.id, now());
     const shipment = manualDhlShipment(parsed.id, now());
     // A number an Amazon Shipment already carries joins that Shipment.
     const existing = findByTrackingNumber(shipments.shipments, parsed.id);
@@ -132,6 +134,7 @@ const AMAZON_LOGIN_RESULTS = {
   cancelled: [1, "Login cancelled"],
   "timed-out": [1, "Login timed out after 15 min"],
   browser: [1, "Chrome didn't start (or is already open for this account)"],
+  busy: [1, "A refresh is reading this account; try again in a minute"],
   "unknown-account": [2, "No such Amazon account; add it with accounts add <label> --accept-risk"],
 };
 
