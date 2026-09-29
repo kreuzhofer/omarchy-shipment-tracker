@@ -5,6 +5,7 @@
 // whose orders list it owns it: its package Shipments take over, marked as
 // added by hand, and the Order-level Shipment goes. While every readable
 // account has said no, it is link-only.
+import { hasDhlSide, releaseToDhl } from "../merge.mjs";
 import { TERMINAL } from "../shipments.mjs";
 import { orderDetailsUrl } from "./pages.mjs";
 
@@ -91,21 +92,34 @@ export function applyOwnership(list, key, label, { owned = [], notOwned = [], re
   }
 }
 
-// `accounts remove`: package Shipments of a manual Order that only the removed
-// account knew collapse back into one Order-level Shipment; an Order-level one
-// it owned loses its owner.
+// Removing a Connection (see disconnect.mjs): it no longer knows any
+// Shipment, and a Shipment nothing else knows goes. When an Amazon account
+// goes, a package Shipment that DHL still knows (the Sendungsliste, or its
+// number added by hand) turns back into a DHL Shipment (merge.mjs); other
+// package Shipments of a manual Order collapse back into one Order-level
+// Shipment, and an Order-level one it owned loses its owner. Nobody has asked
+// the removed Connection about anything any more.
 export function releaseOwnership(list, key) {
   const result = [];
-  const orphans = new Map();
+  const orphans = new Set();
   for (const s of list) {
-    const wasOwner = s.connections.includes(key);
+    if (s.probedBy?.includes(key)) s.probedBy = s.probedBy.filter((c) => c !== key);
+    if (!s.connections.includes(key)) {
+      result.push(s);
+      continue;
+    }
     s.connections = s.connections.filter((c) => c !== key);
-    if (wasOwner && isManual(s) && owner(s) === null) {
+    const lostAccount = isAmazonConnection(key) && s.source === "Amazon" && owner(s) === null;
+    if (lostAccount && !isOrderLevel(s) && hasDhlSide(s)) {
+      result.push(releaseToDhl(s));
+      continue;
+    }
+    if (lostAccount && isManual(s)) {
       if (isOrderLevel(s)) {
         s.account = null;
         result.push(s);
       } else if (!orphans.has(s.orderId)) {
-        orphans.set(s.orderId, s);
+        orphans.add(s.orderId);
         result.push(orderLevelShipment(s.orderId, s.discoveredAt));
       }
       continue;

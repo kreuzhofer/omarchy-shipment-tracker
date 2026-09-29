@@ -8,7 +8,7 @@
 // before anything else happens, under a lock so two runs never spend the same
 // token.
 import { createHash, randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { withLock } from "../lock.mjs";
 import { ensureStateDir, writeAtomic } from "../state.mjs";
@@ -107,6 +107,14 @@ export async function renewIdToken({ stateDir, transport, now }) {
 
 export async function hasTokens(stateDir) {
   return Boolean((await loadTokens(stateDir))?.refresh_token);
+}
+
+// `disconnect dhl`: deletes the token file under the token lock, so a refresh
+// renewing the token right now finishes first and the next one finds none;
+// then the lock file itself.
+export async function forgetTokens(stateDir) {
+  await withTokenLock(stateDir, () => rm(join(stateDir, TOKEN_FILE), { force: true }));
+  await rm(join(stateDir, TOKEN_LOCK), { force: true });
 }
 
 async function postToken(transport, form) {

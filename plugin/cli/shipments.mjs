@@ -68,6 +68,7 @@ export function removeManual(shipments, key) {
   const s = shipments.shipments[i];
   if (!s.connections?.includes("manual")) return "Only Shipments added by hand can be removed.";
   s.connections = s.connections.filter((c) => c !== "manual");
+  delete s.manualTrackingNumber;
   if (s.connections.length === 0) shipments.shipments.splice(i, 1);
   return null;
 }

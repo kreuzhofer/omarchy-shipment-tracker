@@ -80,7 +80,9 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
         dhlNetworkFailure = true;
       }
     }
-    const listed = await updateState(stateDir, (state) => {
+    const listed = await updateState(stateDir, async (state) => {
+      // Disconnected while the sync was in flight: nothing of it counts.
+      if (!(await hasTokens(stateDir))) return new Set();
       const at = now();
       const keys = applyDhlSync(state, outcome, at);
       finishRun(state.sources, at);
