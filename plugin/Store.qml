@@ -18,21 +18,36 @@ Item {
   // Manual adds typed in the popup that `add` hasn't written yet: [{ id, text, at, running }].
   property var queuedAdds: []
   property string addError: ""
+  // Keys `remove` is taking out, in the order clicked; hidden at once.
+  property var pendingRemovals: []
+  // Removed keys stay hidden until shipments.json no longer lists them as manual
+  // adds, so the row doesn't flash back before the file is re-read.
+  property var removedKeys: []
   property double nowMs: Date.now()
 
   readonly property string lastRun: sourcesState.lastRun || ""
   readonly property var shipments: {
     var known = {}
-    var rows = (shipmentsState.shipments || []).slice()
+    var gone = {}
+    pendingRemovals.concat(removedKeys).forEach(function(k) { gone[k] = true })
+    var rows = (shipmentsState.shipments || []).filter(function(s) { return !gone[s.key] })
     rows.forEach(function(s) { known[s.key] = true })
     var queued = queuedAdds.filter(function(p) { return !known["dhl:" + p.id] }).map(function(p) {
       return { key: "queued:" + p.id, direction: "Incoming", source: "DHL", account: null, carrier: "DHL",
         title: p.id, status: "Unknown", estimate: { text: "Looking up…" }, delayed: false,
         url: Shipments.dhlTrackingUrl(p.id), changedAt: p.at, discoveredAt: p.at }
     })
-    // Newest first until the urgency sort lands (#23).
-    return queued.concat(rows.sort(function(a, b) { return String(b.discoveredAt).localeCompare(String(a.discoveredAt)) }))
+    return queued.concat(rows).sort(Shipments.byUrgency)
   }
+  // Connections the user must fix or that can't be read; they count as "need you".
+  readonly property int troubledCount: {
+    var c = sourcesState.connections || {}
+    return Object.keys(c).filter(function(k) { return c[k] && (c[k].health === "needs-login" || c[k].health === "source-down") }).length
+  }
+  // A run that died without clearing `refreshing` stops counting after 15 min.
+  readonly property bool refreshing: !!sourcesState.refreshing && !!sourcesState.refreshing.startedAt
+    && nowMs - new Date(sourcesState.refreshing.startedAt).getTime() < 15 * 6e4
+  readonly property string summary: Shipments.summary(shipments, troubledCount, nowMs)
 
   function parse(text, fallback) {
     try {
@@ -49,7 +64,13 @@ Item {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.shipmentsState = root.parse(text(), root.shipmentsState)
+    onLoaded: {
+      root.shipmentsState = root.parse(text(), root.shipmentsState)
+      var listed = {}
+      var rows = root.shipmentsState.shipments || []
+      rows.forEach(function(s) { listed[s.key] = (s.connections || []).indexOf("manual") >= 0 })
+      if (root.removedKeys.length) root.removedKeys = root.removedKeys.filter(function(k) { return listed[k] })
+    }
     onLoadFailed: root.shipmentsState = ({ shipments: [], events: [] })
   }
 
@@ -109,6 +130,32 @@ Item {
       root.reloadFiles()
       if (exitCode === 0) root.refresh()
       Qt.callLater(root.startNextAdd)
+    }
+  }
+
+  // Takes back a manual add.
+  function remove(key) {
+    if (!key || String(key).indexOf("queued:") === 0 || root.pendingRemovals.indexOf(key) >= 0) return
+    root.pendingRemovals = root.pendingRemovals.concat([key])
+    root.startNextRemove()
+  }
+
+  function startNextRemove() {
+    if (removeProcess.running || root.pendingRemovals.length === 0) return
+    removeProcess.key = root.pendingRemovals[0]
+    removeProcess.command = ["node", root.cliPath, "remove", removeProcess.key]
+    removeProcess.running = true
+  }
+
+  Process {
+    id: removeProcess
+    property string key: ""
+    onExited: function(exitCode, exitStatus) {
+      var done = removeProcess.key
+      if (exitCode === 0) root.removedKeys = root.removedKeys.concat([done])
+      root.reloadFiles()
+      root.pendingRemovals = root.pendingRemovals.filter(function(k) { return k !== done })
+      Qt.callLater(root.startNextRemove)
     }
   }
 

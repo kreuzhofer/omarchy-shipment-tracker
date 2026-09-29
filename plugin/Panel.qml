@@ -5,6 +5,7 @@
 //   omarchy-shell kreuzhofer.shipment-tracker show|hide|toggle
 //   omarchy-shell kreuzhofer.shipment-tracker refresh    start the refresh service
 //   omarchy-shell kreuzhofer.shipment-tracker add <n>    same as the footer add field
+//   omarchy-shell kreuzhofer.shipment-tracker remove <k> same as a row's remove button
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -43,6 +44,7 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): void { backend.refresh() }
     function add(text: string): void { backend.add(text) }
+    function remove(key: string): void { backend.remove(key) }
   }
 
   KeyboardPanel {

@@ -1,5 +1,6 @@
 // Shipment records in shipments.json. Terms follow CONTEXT.md.
 import { trackingPageUrl } from "./dhl/search.mjs";
+import { endsLater } from "./estimate.mjs";
 
 export const TERMINAL = new Set(["Delivered", "Returned"]);
 const AMAZON_ORDER_ID = /^\d{3}-\d{7}-\d{7}$/;
@@ -36,6 +37,8 @@ export function manualDhlShipment(trackingNumber, now) {
 }
 
 // Applies what the Carrier currently says (see dhl/status.mjs) to a Shipment.
+// Delayed: set when the delivery window ends later than the last one seen
+// (`lastWindowTo` survives runs without a window), cleared on turning Terminal.
 export function applyReading(shipment, reading, now) {
   const at = now.toISOString();
   const changed = shipment.status !== reading.status
@@ -45,5 +48,23 @@ export function applyReading(shipment, reading, now) {
   if (reading.title) shipment.title = reading.title;
   shipment.lastSeenAt = at;
   if (changed) shipment.changedAt = at;
-  if (TERMINAL.has(reading.status) && !shipment.terminalAt) shipment.terminalAt = at;
+  if (TERMINAL.has(reading.status)) {
+    shipment.delayed = false;
+    if (!shipment.terminalAt) shipment.terminalAt = at;
+  } else if (reading.window) {
+    if (shipment.lastWindowTo && endsLater(reading.window, shipment.lastWindowTo)) shipment.delayed = true;
+    shipment.lastWindowTo = reading.window;
+  }
+}
+
+// Takes back a manual add: drops the "manual" mark, and the Shipment itself
+// when no Connection knows it. Returns an error message or null.
+export function removeManual(shipments, key) {
+  const i = shipments.shipments.findIndex((s) => s.key === key);
+  if (i < 0) return "No such Shipment.";
+  const s = shipments.shipments[i];
+  if (!s.connections?.includes("manual")) return "Only Shipments added by hand can be removed.";
+  s.connections = s.connections.filter((c) => c !== "manual");
+  if (s.connections.length === 0) shipments.shipments.splice(i, 1);
+  return null;
 }

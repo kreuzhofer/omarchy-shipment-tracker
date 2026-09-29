@@ -1,6 +1,9 @@
 // The list page of the popup (layout from the #9 prototype, variant A):
 // header with refresh, one row per Shipment, footer with the manual-add field.
-// Row: Status glyph | title | Estimate; muted line Status · Direction · Source · age.
+// Row: Status glyph | title + Delayed tag | Estimate; muted line Status ·
+// Direction · Source · age. Ready for pickup and Problem rows get a rail;
+// Ready for pickup also a tint and the accent Estimate; Terminal rows are dimmed.
+// A manual add offers removal on hover.
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -32,8 +35,9 @@ Column {
       Text {
         width: parent.width
         elide: Text.ElideRight
-        text: !root.store ? "" : root.store.lastRun === "" ? "Not refreshed yet"
-          : (root.store.sourcesState.offline ? "Offline · updated " : "Updated ") + Shipments.age(root.store.lastRun, root.store.nowMs)
+        text: !root.store ? "" : root.store.summary + (root.store.refreshing ? "Refreshing…"
+          : root.store.lastRun === "" ? "Not refreshed yet"
+          : (root.store.sourcesState.offline ? "Offline · updated " : "Updated ") + Shipments.age(root.store.lastRun, root.store.nowMs))
         color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.caption
       }
     }
@@ -61,12 +65,26 @@ Column {
       id: row
       required property var modelData
       readonly property var s: modelData
-      readonly property bool isTerminal: s.status === "Delivered" || s.status === "Returned"
+      readonly property bool isTerminal: Shipments.terminal[s.status] === true
+      readonly property bool pickup: s.status === "Ready for pickup"
+      readonly property bool problem: s.status === "Problem"
+      readonly property bool removable: (s.connections || []).length === 1 && s.connections[0] === "manual"
+      property bool removeHovered: false
+      readonly property bool hot: rowMouse.containsMouse || removeHovered
       width: list.width
       height: root.rowHeight
       radius: Style.cornerRadius
-      color: rowMouse.containsMouse ? Style.hoverFillFor(root.fg, Color.accent) : "transparent"
+      color: hot ? Style.hoverFillFor(root.fg, Color.accent)
+        : pickup ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16)
+        : "transparent"
       opacity: isTerminal ? 0.55 : 1
+
+      Rectangle { // left rail marks the Shipments that need the user
+        visible: row.pickup || row.problem
+        width: Style.space(3); height: parent.height - Style.space(8)
+        anchors.verticalCenter: parent.verticalCenter
+        color: row.problem ? Color.urgent : Color.accent
+      }
 
       Text {
         id: glyph
@@ -75,7 +93,7 @@ Column {
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(22)
         text: Shipments.statusGlyph(row.s.status)
-        color: root.fg
+        color: row.problem ? Color.urgent : row.pickup ? Color.accent : root.fg
         font.family: root.ff; font.pixelSize: Style.font.iconLarge
       }
 
@@ -83,7 +101,7 @@ Column {
         anchors.left: glyph.right
         anchors.leftMargin: Style.space(8)
         anchors.right: parent.right
-        anchors.rightMargin: Style.space(10)
+        anchors.rightMargin: Style.space(10) + (removeButton.visible ? removeButton.width + Style.space(4) : 0)
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
 
@@ -93,16 +111,27 @@ Column {
           Text {
             id: titleText
             anchors.left: parent.left
-            width: Math.min(implicitWidth, parent.width - estimateText.implicitWidth - Style.space(12))
+            width: Math.min(implicitWidth, parent.width - estimateText.implicitWidth - delayTag.width - Style.space(12))
             elide: Text.ElideRight
             text: row.s.title
-            color: root.fg; font.family: root.ff; font.pixelSize: Style.font.body
+            color: root.fg; font.family: root.ff; font.pixelSize: Style.font.body; font.bold: row.pickup || row.problem
+          }
+          Rectangle {
+            id: delayTag
+            visible: row.s.delayed === true
+            width: visible ? delayText.implicitWidth + Style.space(8) : 0
+            height: delayText.implicitHeight + Style.space(2)
+            anchors.left: titleText.right; anchors.leftMargin: Style.space(6)
+            anchors.verticalCenter: titleText.verticalCenter
+            radius: Style.cornerRadius
+            color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.25)
+            Text { id: delayText; anchors.centerIn: parent; text: "Delayed"; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption }
           }
           Text {
             id: estimateText
             anchors.right: parent.right
-            text: row.s.estimate ? row.s.estimate.text : ""
-            color: root.fg; font.family: root.ff; font.pixelSize: Style.font.bodySmall
+            text: Shipments.estimateText(row.s, root.store.nowMs)
+            color: row.pickup ? Color.accent : root.fg; font.family: root.ff; font.pixelSize: Style.font.bodySmall; font.bold: row.pickup
           }
         }
         Text {
@@ -120,6 +149,21 @@ Column {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: root.openRequested(row.s.url)
+
+        // Inside the row's MouseArea so hovering it keeps the row hovered.
+        PanelActionButton {
+          id: removeButton
+          visible: row.removable && row.hot
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
+          iconText: "\u{F0156}"
+          tooltipText: "Remove"
+          foreground: root.fg
+          hoverColor: Color.urgent
+          onHovered: function(isHovered) { row.removeHovered = isHovered }
+          onClicked: root.store.remove(row.s.key)
+        }
       }
     }
   }

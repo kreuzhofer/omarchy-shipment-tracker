@@ -1,17 +1,18 @@
-// The minimal DHL ladder at the refresh seam: each recorded (synthetic)
-// response and the Status it must produce.
+// The DHL ladder at the refresh seam: each recorded (synthetic) response and
+// the Status and Estimate it must produce. The rest of the Status table is in
+// dhl-status-table.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fakeDhl, fixture, makeWorld } from "./harness.mjs";
 
 const LADDER = [
-  { number: "00340434000000000022", file: "dhl/announced.json", status: "Announced" },
-  { number: "00340434000000000033", file: "dhl/in-transit.json", status: "In transit" },
-  { number: "00340434000000000044", file: "dhl/out-for-delivery.json", status: "Out for delivery" },
-  { number: "00340434000000000055", file: "dhl/delivered.json", status: "Delivered" },
+  { number: "00340434000000000022", file: "dhl/announced.json", status: "Announced", estimate: null },
+  { number: "00340434000000000033", file: "dhl/in-transit.json", status: "In transit", estimate: { from: "2026-09-30", to: "2026-09-30", text: "Wed 30 Sep" } },
+  { number: "00340434000000000044", file: "dhl/out-for-delivery.json", status: "Out for delivery", estimate: { from: "2026-09-29", to: "2026-09-29", text: "Tue 29 Sep" } },
+  { number: "00340434000000000055", file: "dhl/delivered.json", status: "Delivered", estimate: { from: "2026-09-29", to: "2026-09-29", text: "Delivered Tue 29 Sep" } },
 ];
 
-for (const { number, file, status } of LADDER) {
+for (const { number, file, status, estimate } of LADDER) {
   test(`DHL ladder: ${file} → ${status}`, async (t) => {
     const world = await makeWorld({ transport: fakeDhl({ [number]: { json: fixture(file) } }) });
     t.after(() => world.cleanup());
@@ -23,7 +24,7 @@ for (const { number, file, status } of LADDER) {
     const s = await world.shipment(`dhl:${number}`);
     assert.equal(s.status, status);
     assert.equal(s.direction, "Incoming");
-    assert.equal(s.estimate, null);
+    assert.deepEqual(s.estimate, estimate);
     assert.equal(s.changedAt, "2026-09-29T10:05:00.000Z");
     assert.equal(s.lastSeenAt, "2026-09-29T10:05:00.000Z");
     assert.deepEqual((await world.shipmentsFile()).events, []);
