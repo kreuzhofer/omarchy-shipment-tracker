@@ -1,9 +1,15 @@
 // One refresh run: the only writer of Status, Health and events[].
 //
+// Run order: the DHL Connection (when logged in), then anonymous lookups of
+// manual adds the Sendungsliste didn't list. `source` limits the run to one
+// Connection key (Retry); manual lookups then wait for the next full run.
+//
 // Network requests happen outside the state lock; their results are applied
 // under it, re-reading the files first so a concurrent `add` is never lost.
 // A Shipment added while a run is in flight is picked up by the next round of
 // the same run.
+import { hasTokens } from "./dhl/auth.mjs";
+import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
 import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
 import { applyReading, TERMINAL } from "./shipments.mjs";
@@ -15,13 +21,38 @@ const MAX_ROUNDS = 3;
 // Terminal Shipments are never re-fetched.
 const needsLookup = (s) => s.source === "DHL" && s.connections.includes("manual") && !TERMINAL.has(s.status);
 
-export async function refresh({ stateDir, now, transport, log }) {
+export async function refresh({ stateDir, now, transport, log, source = null }) {
   const attempted = new Set();
-  const counts = { lookedUp: 0, unknown: 0, failed: 0, network: 0 };
+  const counts = { lookedUp: 0, unknown: 0, failed: 0, network: 0, synced: 0 };
+  const finishRun = (sources, at) => {
+    sources.lastRun = at.toISOString();
+    sources.refreshing = null;
+    // Offline is not an error: only the subtitle changes.
+    sources.offline = counts.network > 0 && counts.network === counts.failed && counts.lookedUp === 0 && counts.synced === 0;
+  };
   // The header reads "Refreshing…" while this is set.
   await updateState(stateDir, ({ sources }) => { sources.refreshing = { startedAt: now().toISOString() }; });
 
-  for (let round = 0; round < MAX_ROUNDS; round++) {
+  if ((source === null || source === DHL) && await hasTokens(stateDir)) {
+    const outcome = await syncDhl({ stateDir, transport, now });
+    if (outcome.ok) counts.synced++;
+    else {
+      counts.failed++;
+      if (outcome.reason === "network") counts.network++;
+    }
+    const listed = await updateState(stateDir, (state) => {
+      const at = now();
+      const keys = applyDhlSync(state, outcome, at);
+      state.shipments.events = [];
+      finishRun(state.sources, at);
+      return keys;
+    });
+    // The Sendungsliste already told us about these; no anonymous lookup.
+    for (const key of listed) attempted.add(key);
+    log(outcome.ok ? `refresh: dhl ok, ${outcome.elements.length} listed` : `refresh: dhl failed (${outcome.reason})`);
+  }
+
+  for (let round = 0; round < (source === null ? MAX_ROUNDS : 0); round++) {
     const snapshot = await readState(stateDir);
     const targets = snapshot.shipments.shipments.filter((s) => needsLookup(s) && !attempted.has(s.key));
     if (round > 0 && targets.length === 0) break;
@@ -48,10 +79,7 @@ export async function refresh({ stateDir, now, transport, log }) {
         if (reading) applyReading(s, reading, at);
       }
       shipments.events = [];
-      sources.lastRun = at.toISOString();
-      sources.refreshing = null;
-      // Offline is not an error: only the subtitle changes.
-      sources.offline = counts.network > 0 && counts.network === counts.failed && counts.lookedUp === 0;
+      finishRun(sources, at);
     });
   }
 
