@@ -21,7 +21,7 @@ Column {
   spacing: Style.space(6)
 
   function toneOf(summary) {
-    if (summary.indexOf("need") >= 0 || summary === "Can't be read") return "bad"
+    if (summary.toLowerCase().indexOf("need") >= 0 || summary === "Can't be read") return "bad"
     if (summary === "Not connected" || summary.indexOf("Connecting") >= 0) return ""
     return "good"
   }
