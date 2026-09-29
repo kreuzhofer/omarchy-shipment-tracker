@@ -3,6 +3,7 @@
 import { execFile } from "node:child_process";
 import { realChrome } from "./amazon/chrome.mjs";
 import { chromeBrowser } from "./chrome.mjs";
+import { softeria } from "./mail/softeria.mjs";
 import { main } from "./main.mjs";
 import { httpTransport } from "./transport.mjs";
 
@@ -28,6 +29,7 @@ const code = await main(process.argv.slice(2), {
   transport: httpTransport,
   browser: chromeBrowser,
   chrome: realChrome,
+  mcp: softeria,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log: (line) => console.error(line),
   out: (line) => console.log(line),

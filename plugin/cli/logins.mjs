@@ -1,11 +1,12 @@
 // The Login lifecycle (spec #21, "Login window lifecycle"; decided on #19).
 // A Login in progress is the Connection's `login` field in sources.json, not a
 // Health:
-//   login: { phase: "waiting" | "window" | "syncing", startedAt, expiresAt, returnTo, unit, pid }
+//   login: { phase: "waiting" | "window" | "code" | "syncing", startedAt, expiresAt, returnTo, unit, pid, code?, url? }
 //   lastLogin: { result: "cancelled" | "timed-out" | "failed", at }
 // "waiting": an Amazon profile is held by a refresh (up to 90 s). "window":
 // the login window is open until `expiresAt` (15 minutes, every kind).
-// "syncing": signed in, the first sync runs.
+// "code": a device-code sign-in (Microsoft 365 mail) shows `code` to enter
+// at `url` until `expiresAt`. "syncing": signed in, the first sync runs.
 //
 // Only one Login runs at a time. A Login that doesn't succeed puts Health
 // back to `returnTo` and never touches tokens or profiles; `lastLogin` tells
@@ -78,6 +79,7 @@ export async function clearStale({ stateDir, now, exec, log }) {
 //   signal     aborts when the user cancels (SIGTERM from Cancel, Ctrl-C)
 //   waiting()  the profile is held by a refresh
 //   window()   the window opens now; returns its deadline (a Date)
+//   code({ code, url })  a device code to show until the deadline
 //   syncing()  signed in; cancelling is no longer possible
 // Refuses with exit code 1 while another Login runs.
 export async function runLogin(key, { stateDir, env, now, exec, log, onCancel }, attempt) {
@@ -119,6 +121,7 @@ export async function runLogin(key, { stateDir, env, now, exec, log, onCancel },
       await ours((c) => Object.assign(c.login, { phase: "window", expiresAt: deadline.toISOString() }));
       return deadline;
     },
+    code: ({ code, url }) => ours((c) => Object.assign(c.login, { phase: "code", code, url })),
     syncing() {
       stopListening();
       stopListening = () => {};

@@ -45,7 +45,14 @@ function orderLevelShipment(orderId, at, probedBy = []) {
 // Shipments are then marked as added by hand).
 export function addManualOrder(list, orderId, now) {
   const existing = list.filter((s) => s.source === "Amazon" && s.orderId === orderId);
-  for (const s of existing) if (!s.connections.includes("manual")) s.connections.push("manual");
+  for (const s of existing) {
+    if (!s.connections.includes("manual")) s.connections.push("manual");
+    // An Order-level Shipment mail found is now looked for like any manual Order.
+    if (isOrderLevel(s)) {
+      s.probedBy ??= [];
+      s.linkOnly ??= false;
+    }
+  }
   if (existing.length > 0) return false;
   list.push(orderLevelShipment(orderId, now.toISOString()));
   return true;

@@ -2,7 +2,8 @@
 // call main() with a temp state dir, a fixed clock and fake transports.
 //
 // deps: { env, now: () => Date, transport: { fetch }, browser: { catchRedirect },
-//         chrome: { launch }, sleep(ms), log(line), out(line), exec?, onCancel? }
+//         chrome: { launch }, mcp: { start } (see mail/mcp.mjs), sleep(ms),
+//         log(line), out(line), exec?, onCancel? }
 // onCancel(fn) calls fn when the user cancels a running Login (SIGTERM from
 // the plugin's Cancel, or Ctrl-C) and returns a function that stops listening.
 // Local time (Amazon's quiet hours, Estimate days) uses env.TZ when set.
@@ -13,6 +14,7 @@ import { disconnect } from "./disconnect.mjs";
 import { dismiss, undismiss } from "./dismiss.mjs";
 import { login as loginDhl } from "./login.mjs";
 import { clearStale } from "./logins.mjs";
+import { loginMail } from "./mail/connection.mjs";
 import { findByTrackingNumber } from "./merge.mjs";
 import { refresh } from "./refresh.mjs";
 import { manualDhlShipment, parseManualId, removeManual } from "./shipments.mjs";
@@ -26,12 +28,14 @@ const USAGE = `usage: shipment-tracker <command>
   undismiss <shipmentKey>
                          show a Dismissed Shipment again
   login dhl              log in to dhl.de in a dedicated Chrome window, then sync
+  login mail             sign in to Microsoft 365 mail with a device code, then sync
   login amazon:<label>   sign in to that account in its own Chrome window
   accounts add <label> --accept-risk
                          register an amazon.de account (then: login amazon:<label>)
   accounts remove <label>
                          remove it, its Chrome profile and its Shipments
   disconnect dhl         log out of DHL: delete its token, login profile and Shipments
+  disconnect mail        log out of Microsoft 365 mail and drop the Orders only mail knew
   refresh [--source <key>]
                          one refresh run (all Connections, or one)
   clear-stale-logins     end Logins whose process is gone as failed (the plugin runs it on load)
@@ -178,12 +182,13 @@ const AMAZON_LOGIN_RESULTS = {
   "unknown-account": [2, "No such Amazon account; add it with accounts add <label> --accept-risk"],
 };
 
-// `login dhl` or `login amazon:<label>`.
+// `login dhl`, `login mail` or `login amazon:<label>`.
 async function login(args, run) {
+  if (args.length === 1 && args[0] === "mail") return loginMail(run);
   const label = args.length === 1 ? args[0].match(/^amazon:(.+)$/)?.[1] : null;
   if (!label) {
     if (args.length === 1 && args[0] === "dhl") return loginDhl(args, run.stateDir, run);
-    run.log("usage: shipment-tracker login dhl | login amazon:<label>");
+    run.log("usage: shipment-tracker login dhl | login mail | login amazon:<label>");
     return 2;
   }
   const result = await loginAmazon(label, run);

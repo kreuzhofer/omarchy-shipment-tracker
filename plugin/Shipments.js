@@ -198,11 +198,24 @@ function loginResultText(lastLogin) {
 function loginText(key, c, nowMs) {
   var name = connectionName(key, c)
   var login = c && c.login
+  if (key === "mail" && (!login || login.phase === "window")) return "Getting a sign-in code for " + name + "…"
   if (!login) return "Opening a Chrome window for " + name + "…"
   if (login.phase === "waiting") return "Waiting for the refresh to finish…"
   if (login.phase === "syncing") return name + " logged in · syncing…"
-  var left = Math.max(1, Math.ceil((new Date(login.expiresAt).getTime() - nowMs) / 6e4))
+  var left = minutesLeft(login, nowMs)
+  if (login.phase === "code") return "Enter " + login.code + " at " + String(login.url || "").replace(/^https:\/\//, "") + " · " + left + " min left"
   return "Chrome is open · log in to " + name + " there · " + left + " min left"
+}
+
+function minutesLeft(login, nowMs) {
+  return Math.max(1, Math.ceil((new Date(login.expiresAt).getTime() - nowMs) / 6e4))
+}
+
+// The line under the device code on the mail row.
+function codeHint(c, nowMs) {
+  var login = c && c.login
+  if (!login || login.phase !== "code") return ""
+  return "Sign in with your work account · " + minutesLeft(login, nowMs) + " min left"
 }
 
 // The transient unit a Login runs in (Cancel stops it).
@@ -278,10 +291,12 @@ function isSetUp(c) {
 // right after Log in was clicked).
 function rowLoginText(key, c, nowMs) {
   var login = c && c.login
+  if (key === "mail" && (!login || login.phase === "window")) return "Getting a sign-in code from Microsoft…"
   if (!login) return "Opening a Chrome window…"
   if (login.phase === "waiting") return "Waiting for the refresh to finish…"
-  if (login.phase === "syncing") return "Logged in · first sync running…"
-  var left = Math.max(1, Math.ceil((new Date(login.expiresAt).getTime() - nowMs) / 6e4))
+  if (login.phase === "syncing") return (key === "mail" ? "Signed in" : "Logged in") + " · first sync running…"
+  var left = minutesLeft(login, nowMs)
+  if (login.phase === "code") return codeHint(c, nowMs)
   var text = key === "dhl" ? "Chrome is open on the DHL login. Log in there (2FA too); the window closes by itself."
     : "Chrome is open on amazon.de. Sign in as " + accountLabel(key, c) + " and tick “Angemeldet bleiben”; the window hides itself."
   return text + " · " + left + " min left"
@@ -295,7 +310,7 @@ function rowHealthText(key, c, nowMs) {
   if (!isSetUp(c)) return result
   // An ok Amazon account says nothing: its check glyph does.
   if (result !== "") return result + " · still connected"
-  return key === "dhl" ? "Connected · Incoming and Outgoing" : ""
+  return key === "dhl" ? "Connected · Incoming and Outgoing" : key === "mail" ? "Connected · read-only mail access" : ""
 }
 
 // Falls back to ASCII letters where the JS engine lacks Unicode property escapes.

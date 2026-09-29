@@ -28,7 +28,7 @@ Rectangle {
     anchors.left: parent.left
     anchors.leftMargin: Style.space(10)
     anchors.verticalCenter: parent.verticalCenter
-    text: root.phase === "syncing" ? "\u{F04E6}" : root.phase === "waiting" ? "\u{F0150}" : "\u{F059F}" // sync / clock / web
+    text: root.phase === "syncing" ? "\u{F04E6}" : root.phase === "waiting" ? "\u{F0150}" : root.phase === "code" ? "\u{F0306}" : "\u{F059F}" // sync / clock / key / web
     color: Color.accent; font.family: root.ff; font.pixelSize: Style.font.icon
   }
   Text {

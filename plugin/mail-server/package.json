@@ -1,0 +1,12 @@
+{
+  "name": "shipment-tracker-mail-server",
+  "private": true,
+  "description": "The pinned Softeria ms-365-mcp-server the shipment-tracker CLI talks to over MCP stdio (Microsoft 365 mail). Installed on demand with npm ci; node_modules is never committed.",
+  "license": "MIT",
+  "dependencies": {
+    "@softeria/ms-365-mcp-server": "0.156.2"
+  },
+  "allowScripts": {
+    "keytar@7.9.0": true
+  }
+}
