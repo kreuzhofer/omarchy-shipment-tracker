@@ -36,6 +36,10 @@ _Avoid_: Integration, login, account (on its own)
 How a Connection is doing. Exactly one of: **Not set up**, **OK**, **Needs login** (the user must sign in or pass a check, e.g. an expired session, a captcha, or DHL's suspicious empty list), or **Source down** (it can't be read and the user can't fix it, e.g. an outage or a changed data format). A Login in progress is not a Health.
 _Avoid_: Status (reserved for Shipments), error, state
 
+**Login**:
+The user signing in to one Connection in a window the tracker opens (or with a device code), followed by the Connection's first sync. Only one runs at a time, and it ends by itself after 15 minutes. A Login that doesn't succeed ends as cancelled, timed out or failed and leaves the Connection's Health as it was.
+_Avoid_: Connect, sign-in flow, auth
+
 ### Progress
 
 **Status**:

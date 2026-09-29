@@ -130,7 +130,10 @@ test("login ends as cancelled when the user closes the window, and leaves the ac
   assert.equal(await world.run("login", "amazon:Personal"), 1);
 
   assert.equal(world.logs.at(-1), "login: Login cancelled");
-  assert.deepEqual(await world.sourcesFile(), before);
+  const after = await world.sourcesFile();
+  assert.deepEqual(after.connections["amazon:Personal"].lastLogin, { result: "cancelled", at: "2026-09-29T10:00:02.000Z" });
+  after.connections["amazon:Personal"].lastLogin = null;
+  assert.deepEqual(after, before);
 });
 
 test("login times out after 15 minutes", async (t) => {

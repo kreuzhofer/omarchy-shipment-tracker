@@ -2,13 +2,16 @@
 // call main() with a temp state dir, a fixed clock and fake transports.
 //
 // deps: { env, now: () => Date, transport: { fetch }, browser: { catchRedirect },
-//         chrome: { launch }, sleep(ms), log(line), out(line), exec? }
+//         chrome: { launch }, sleep(ms), log(line), out(line), exec?, onCancel? }
+// onCancel(fn) calls fn when the user cancels a running Login (SIGTERM from
+// the plugin's Cancel, or Ctrl-C) and returns a function that stops listening.
 // Local time (Amazon's quiet hours, Estimate days) uses env.TZ when set.
 // Logs carry counts and Health only, never tracking numbers, names or addresses.
 import { addAccount, loginAmazon, removeAccount } from "./amazon/connection.mjs";
 import { addManualOrder } from "./amazon/manual.mjs";
 import { dismiss, undismiss } from "./dismiss.mjs";
 import { login as loginDhl } from "./login.mjs";
+import { clearStale } from "./logins.mjs";
 import { findByTrackingNumber } from "./merge.mjs";
 import { refresh } from "./refresh.mjs";
 import { manualDhlShipment, parseManualId, removeManual } from "./shipments.mjs";
@@ -29,6 +32,7 @@ const USAGE = `usage: shipment-tracker <command>
                          remove it, its Chrome profile and its Shipments
   refresh [--source <key>]
                          one refresh run (all Connections, or one)
+  clear-stale-logins     end Logins whose process is gone as failed (the plugin runs it on load)
   install                install the hourly refresh timer (idempotent)
   uninstall              remove the refresh timer and service`;
 
@@ -57,6 +61,8 @@ export async function main(argv, deps) {
       }
       return refresh({ ...run, source });
     }
+    case "clear-stale-logins":
+      return clearStale(run);
     case "install":
       return install(deps);
     case "uninstall":
@@ -161,6 +167,8 @@ const AMAZON_LOGIN_RESULTS = {
   "timed-out": [1, "Login timed out after 15 min"],
   browser: [1, "Chrome didn't start (or is already open for this account)"],
   busy: [1, "A refresh is reading this account; try again in a minute"],
+  // logins.mjs already said which Login to finish first.
+  "another-login": [1, null],
   "unknown-account": [2, "No such Amazon account; add it with accounts add <label> --accept-risk"],
 };
 
@@ -174,6 +182,6 @@ async function login(args, run) {
   }
   const result = await loginAmazon(label, run);
   const [code, text] = AMAZON_LOGIN_RESULTS[result] ?? [1, `Signed in, but the first sync stopped: ${result}`];
-  (code === 0 ? run.out : run.log)(`login: ${text}`);
+  if (text) (code === 0 ? run.out : run.log)(`login: ${text}`);
   return code;
 }

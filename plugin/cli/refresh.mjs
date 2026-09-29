@@ -27,6 +27,7 @@ import { readDhlElement } from "./dhl/status.mjs";
 import { clearUpdatedDismissals } from "./dismiss.mjs";
 import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
 import { recordConnectionEvents, recordFailure } from "./health.mjs";
+import { clearStaleLogins } from "./logins.mjs";
 import { applyDhlReading, carriedByDhl } from "./merge.mjs";
 import { applyRetention } from "./retention.mjs";
 import { TERMINAL } from "./shipments.mjs";
@@ -42,7 +43,7 @@ const needsLookup = (s) => !TERMINAL.has(s.status)
 
 // `firstSync`: this run is the first sync of the `source` Connection after a
 // Login, so what it discovers is not announced as new.
-export async function refresh({ stateDir, env, now, transport, chrome, sleep, timeZone, log, source = null, firstSync = false }) {
+export async function refresh({ stateDir, env, now, transport, chrome, sleep, timeZone, log, exec, source = null, firstSync = false }) {
   const attempted = new Set();
   const counts = { lookedUp: 0, unknown: 0, failed: 0, network: 0, synced: 0 };
   // Called by every part of the run that got to write its results.
@@ -56,9 +57,11 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
   // DHL runs first, so whether its network failure is its own (something
   // else in the run got through) is only known at the end of the run.
   let dhlNetworkFailure = false;
-  // The header reads "Refreshing…" while this is set.
-  const quiet = await updateState(stateDir, ({ shipments, sources }) => {
+  // The header reads "Refreshing…" while this is set. A Login whose process
+  // is gone ends as failed, so nothing sticks at "Connecting…".
+  const quiet = await updateState(stateDir, async ({ shipments, sources }) => {
     sources.refreshing = { startedAt: now().toISOString() };
+    if (await clearStaleLogins(sources, now(), { exec })) log("refresh: stale Login cleared");
     markKnown(shipments);
     return firstSyncConnections(sources);
   });

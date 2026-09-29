@@ -6,13 +6,13 @@
 // Where the login profile lives: the tracker's own data dir
 // (~/.local/share/omarchy-shipment-tracker/dhl), never the user's normal
 // browser profile. The Login lifecycle in sources.json (phase, deadline,
-// returnTo, systemd unit) is #30's.
+// returnTo, one at a time) is logins.mjs's; this is one attempt inside it.
 import { join } from "node:path";
 import { authorizeRequest, exchangeCode, readRedirect, REDIRECT_PREFIX } from "./dhl/auth.mjs";
+import { runLogin } from "./logins.mjs";
 import { refresh } from "./refresh.mjs";
 
 const APP = "omarchy-shipment-tracker";
-const LOGIN_DEADLINE_MS = 15 * 60 * 1000;
 
 export function dataDirFor(env) {
   return join(env.XDG_DATA_HOME || join(env.HOME, ".local/share"), APP);
@@ -30,17 +30,24 @@ export async function login(args, stateDir, deps) {
     deps.log("usage: shipment-tracker login dhl");
     return 2;
   }
+  return runLogin(key, { stateDir, ...deps }, (handle) => attempt(stateDir, deps, handle));
+}
+
+async function attempt(stateDir, deps, handle) {
   const request = authorizeRequest();
   deps.log("login: a Chrome window opens on the DHL login; log in there (2FA if asked). It closes by itself.");
+  const deadline = await handle.window();
   let redirectUrl;
   try {
     redirectUrl = await deps.browser.catchRedirect({
       url: request.url,
       profileDir: join(dataDirFor(deps.env), "dhl"),
       redirectPrefix: REDIRECT_PREFIX,
-      timeoutMs: LOGIN_DEADLINE_MS,
+      timeoutMs: Math.max(0, deadline.getTime() - deps.now().getTime()),
+      signal: handle.signal,
     });
   } catch (e) {
+    if (e.code === "cancelled" || e.code === "timed-out") handle.outcome = e.code;
     deps.log(`login: ${OUTCOME_MESSAGES[e.code] ?? "the login window failed"}`);
     return 1;
   }
@@ -54,6 +61,8 @@ export async function login(args, stateDir, deps) {
     deps.log(`login: ${exchanged.message ?? `the code exchange failed (${exchanged.reason})`}`);
     return 1;
   }
+  handle.outcome = "ok";
+  await handle.syncing();
   deps.log("login: dhl logged in, running its first sync");
-  return refresh({ stateDir, now: deps.now, transport: deps.transport, log: deps.log, source: "dhl", firstSync: true });
+  return refresh({ stateDir, now: deps.now, transport: deps.transport, exec: deps.exec, log: deps.log, source: "dhl", firstSync: true });
 }

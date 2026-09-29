@@ -10,6 +10,18 @@ const exec = (file, args) => new Promise((resolve) => {
   execFile(file, args, (error, stdout, stderr) => resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr }));
 });
 
+// Cancel on a Login stops its systemd unit (SIGTERM); Ctrl-C in a terminal
+// sends SIGINT. Only a running Login listens; otherwise both end the process.
+function onCancel(fn) {
+  const handler = () => fn();
+  process.on("SIGTERM", handler);
+  process.on("SIGINT", handler);
+  return () => {
+    process.off("SIGTERM", handler);
+    process.off("SIGINT", handler);
+  };
+}
+
 const code = await main(process.argv.slice(2), {
   env: process.env,
   now: () => new Date(),
@@ -20,6 +32,7 @@ const code = await main(process.argv.slice(2), {
   log: (line) => console.error(line),
   out: (line) => console.log(line),
   exec,
+  onCancel,
 }).catch((e) => {
   // Never log a tracking number, even from an unexpected error message.
   console.error(`error: ${String(e.message).replace(/\d{3}-\d{7}-\d{7}|[A-Za-z0-9]*\d[A-Za-z0-9]{7,}/g, "…")}`);

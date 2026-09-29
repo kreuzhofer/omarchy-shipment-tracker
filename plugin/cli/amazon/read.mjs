@@ -129,10 +129,12 @@ function trackerReading(target, { state, carrierText }, now, timeZone) {
 
 // Waits for the user to sign in in the visible window: success is the order
 // history loading without a challenge. Returns "ok", "cancelled" (the user
-// closed the tab or window) or "timed-out".
-export async function waitForSignIn(tab, { now, sleep, deadline }) {
+// closed the tab or window, or `signal` aborted: Cancel) or "timed-out".
+export async function waitForSignIn(tab, { now, sleep, deadline, signal }) {
   let closed = false;
   tab.closed.then(() => { closed = true; });
+  signal?.addEventListener("abort", () => { closed = true; }, { once: true });
+  if (signal?.aborted) closed = true;
   try {
     await tab.navigate(HISTORY_URL);
     while (!closed && now() < deadline) {
