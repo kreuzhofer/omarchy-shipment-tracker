@@ -31,6 +31,9 @@ Item {
   readonly property bool notificationsOn: host ? host.notificationsOn === true : true
   readonly property string omarchyBin: Quickshell.env("OMARCHY_PATH") ? Quickshell.env("OMARCHY_PATH") + "/bin/" : ""
 
+  // The header's 7 / 30 days switch: the list shows Shipments whose last change
+  // falls in the last `days` days (retention keeps at most 30).
+  property int days: 7
   readonly property string lastRun: sourcesState.lastRun || ""
   readonly property var shipments: {
     var known = {}
@@ -47,6 +50,25 @@ Item {
     })
     return queued.concat(rows).sort(Shipments.byUrgency)
   }
+  // What the list shows: `shipments` within the 7 / 30 days window. Manual adds
+  // waiting for `add` always show.
+  readonly property var recentShipments: {
+    var cutoff = nowMs - days * 864e5
+    return shipments.filter(function(s) {
+      return String(s.key).indexOf("queued:") === 0 || new Date(s.changedAt).getTime() >= cutoff
+    })
+  }
+  // Nothing tracked and no Connection set up: the first-run empty state.
+  readonly property bool nothingTracked: (shipmentsState.shipments || []).length === 0 && queuedAdds.length === 0
+    && Object.keys(sourcesState.connections || {}).every(function(k) {
+      var c = sourcesState.connections[k]
+      return !c || c.health === "not-set-up"
+    })
+
+  function setDays(n) {
+    if (n === 7 || n === 30) root.days = n
+  }
+
   // Connections the user must fix or that can't be read; they count as "need you".
   readonly property int troubledCount: {
     var c = sourcesState.connections || {}

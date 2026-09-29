@@ -14,6 +14,7 @@ import { connectionRecord, recordFailure, recordOk } from "../health.mjs";
 import { withLock } from "../lock.mjs";
 import { nextAmazonPort } from "../ports.mjs";
 import { absorbDhlTwin, applyAmazonReading } from "../merge.mjs";
+import { droppedKeys, isDropped } from "../retention.mjs";
 import { readState, updateState } from "../state.mjs";
 import { openAccountBrowser, profileDirFor } from "./browser.mjs";
 import { orderDetailsUrl } from "./pages.mjs";
@@ -102,8 +103,9 @@ export async function refreshAmazon({ stateDir, env, now, chrome, sleep, timeZon
       const { shipments } = await readState(stateDir);
       const known = (k) => shipments.shipments.find((s) => s.key === k);
       const lookFor = ordersToLookFor(shipments.shipments, key);
+      const dropped = droppedKeys(shipments);
       const result = await withProfile(profileDirFor(env, conn.label), 0,
-        () => runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, hidden: true }))
+        () => runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, dropped, hidden: true }))
         .catch((e) => { if (e.code === "locked") return { reason: "busy" }; throw e; });
       if (result.reason === "busy") {
         log("refresh: amazon account busy, skipped");
@@ -118,11 +120,11 @@ export async function refreshAmazon({ stateDir, env, now, chrome, sleep, timeZon
   }
 }
 
-async function runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, hidden, tab: openTab }) {
+async function runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, dropped, hidden, tab: openTab }) {
   let tab = openTab;
   try {
     tab ??= await openAccountBrowser(chrome, { profileDir: profileDirFor(env, conn.label), port: conn.port, hidden });
-    return await readAccount(tab, { known, lookFor, sleep, now, timeZone, historyLoaded: Boolean(openTab) });
+    return await readAccount(tab, { known, lookFor, dropped, sleep, now, timeZone, historyLoaded: Boolean(openTab) });
   } catch (e) {
     if (e.code === "busy") return { reason: "busy" };
     if (e.code !== "browser") throw e;
@@ -145,8 +147,12 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     // A Login's first sync records its own notification events (no `new`
     // ones); a refresh records them once at the end of its run.
     if (firstSync) markKnown(shipments);
-    for (const reading of readings) upsert(shipments.shipments, reading, conn, key, at);
-    applyOwnership(shipments.shipments, key, conn.label, result);
+    // A dropped Shipment never comes back, as a reading or as ownership of a
+    // manual Order (see retention.mjs).
+    const dropped = droppedKeys(shipments);
+    const kept = readings.filter((r) => !isDropped(dropped, r.key));
+    for (const reading of kept) upsert(shipments.shipments, reading, conn, key, at);
+    applyOwnership(shipments.shipments, key, conn.label, { ...result, readings: kept });
     // A Login that reached the order history has proven the session, even if
     // its first sync then fails for another reason.
     if (firstSync && conn.health !== "ok") {
@@ -237,7 +243,7 @@ async function signIn(label, { stateDir, env, now, chrome, sleep, timeZone, log 
     const known = (k) => shipments.shipments.find((s) => s.key === k);
     handedOver = true;
     const lookFor = ordersToLookFor(shipments.shipments, key);
-    const result = await runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, tab });
+    const result = await runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, dropped: droppedKeys(shipments), tab });
     const counts = { synced: 0, failed: 0, network: 0, lookedUp: 0 };
     const finishRun = (sources) => {
       sources.offline = counts.network > 0 && counts.network === counts.failed && counts.synced === 0 && counts.lookedUp === 0;

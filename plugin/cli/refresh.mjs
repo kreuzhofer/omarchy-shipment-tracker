@@ -22,6 +22,7 @@ import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
 import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
 import { applyDhlReading, carriedByDhl } from "./merge.mjs";
+import { applyRetention } from "./retention.mjs";
 import { TERMINAL } from "./shipments.mjs";
 import { readState, updateState } from "./state.mjs";
 
@@ -113,10 +114,13 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
   }
 
   // "Refreshing…" lasts the whole run, Amazon's paced page reads included.
-  const told = await updateState(stateDir, ({ shipments, sources }) => {
-    sources.refreshing = null;
-    return recordEvents(shipments, { firstSync: quiet });
+  // Retention runs before the events, so a Shipment dropped now tells nothing.
+  const { told, dropped } = await updateState(stateDir, (state) => {
+    state.sources.refreshing = null;
+    const dropped = applyRetention(state, now());
+    return { told: recordEvents(state.shipments, { firstSync: quiet }), dropped };
   });
+  if (dropped > 0) log(`refresh: ${dropped} Shipment(s) past retention dropped`);
   if (told > 0) log(`refresh: ${told} notification event(s)`);
 
   log(`refresh: looked up ${counts.lookedUp} (${counts.unknown} unknown), ${counts.failed} failed${counts.network ? `, ${counts.network} offline` : ""}`);
