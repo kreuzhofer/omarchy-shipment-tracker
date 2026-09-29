@@ -172,19 +172,19 @@ test("a mail-only Shipment notifies like any other: new, later Out for delivery,
 
   await world.run("refresh");
   assert.deepEqual((await world.shipmentsFile()).events.map((e) => [e.kind, e.title, e.body, e.url]), [
-    ["new", "New Shipment from Amazon", `${item} · In transit · Ankunft morgen`, `${ORDER_PAGE}${ORDER_A}`],
+    ["new", `New shipment: ${item}`, "Amazon · In transit · Ankunft morgen", `${ORDER_PAGE}${ORDER_A}`],
   ]);
 
   account.mails.push(shippingConfirmation({ orderId: ORDER_A, item, at: "2026-09-29T11:00:00Z", estimate: "Ankunft übermorgen" }));
   world.setClock("2026-09-29T12:00:00.000Z");
   await world.run("refresh");
-  assert.deepEqual((await world.shipmentsFile()).events.map((e) => [e.kind, e.title]), [["delayed", "Delayed"]]);
+  assert.deepEqual((await world.shipmentsFile()).events.map((e) => [e.kind, e.title]), [["delayed", `Your ${item} is delayed`]]);
 
   account.mails.push(outForDelivery({ orderId: ORDER_A, item, at: "2026-10-01T06:00:00Z" }));
   world.setClock("2026-10-01T07:00:00.000Z");
   await world.run("refresh");
   const file = await world.shipmentsFile();
-  assert.deepEqual(file.events.map((e) => [e.kind, e.title, e.body]), [["status", "Out for delivery", `${item} · Ankunft heute`]]);
+  assert.deepEqual(file.events.map((e) => [e.kind, e.title, e.body]), [["status", `Your ${item} is out for delivery`, "Amazon · Ankunft heute"]]);
   assert.equal((await world.shipment(`amazon:${ORDER_A}`)).delayed, true);
 });
 

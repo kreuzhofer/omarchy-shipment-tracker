@@ -14,6 +14,8 @@
 // before this rule, or written by a writer that doesn't record events (e.g. a
 // Connection's own first sync), is never announced as new.
 
+import { existsSync } from "node:fs";
+
 const INCOMING_STATUSES = ["Out for delivery", "Ready for pickup", "Problem", "Returning", "Delivered", "Returned"];
 
 // Per Direction: which Statuses a transition into notifies, and whether
@@ -50,19 +52,61 @@ export function firstSyncConnections(sources) {
   return keys;
 }
 
-const who = (s) => (s.direction === "Outgoing" ? `To ${s.title}` : s.title);
-// Who sent a new Shipment: the Amazon account for Amazon Orders (their title
-// is the item), else the sender DHL names as the title.
-const sender = (s) => (s.source === "Amazon" ? ["Amazon", s.account].filter(Boolean).join(" · ") : s.title);
+// Titles and bodies (#67, variant B): the title names the item, the body is
+// the row's Source label and Estimate, e.g. "Your USB-C Dock is out for
+// delivery" / "Amazon · Personal via DHL · Wed 30 Sep 14:00–17:00".
 const line = (...parts) => parts.filter((p) => typeof p === "string" && p !== "").join(" · ");
 
+const MAX_ITEM = 40;
+// Cut at the last word that fits when that keeps most of it, else mid-word.
+function clip(text) {
+  if (text.length <= MAX_ITEM) return text;
+  const space = text.lastIndexOf(" ", MAX_ITEM - 1);
+  const cut = space >= MAX_ITEM * 0.6 ? text.slice(0, space) : text.slice(0, MAX_ITEM - 1);
+  return `${cut.trimEnd()}…`;
+}
+// A title that is only the tracking number names nobody.
+const named = (text, s) => (typeof text === "string" && text.trim() !== "" && text !== s.trackingNumber ? clip(text.trim()) : null);
+
+// What the title calls the Shipment: the item when known (an Amazon Order's
+// title, a DHL parcel's item from mail), else the parcel by who it is from or to.
+function item(s) {
+  const thing = named(s.itemTitle, s);
+  if (thing) return thing;
+  const who = named(s.title, s);
+  if (s.direction === "Outgoing") return who ? `parcel to ${who}` : "parcel";
+  if (s.source === "Amazon") return who ?? "Amazon order";
+  return who ? `parcel from ${who}` : "parcel";
+}
+
+const STATUS_TITLES = {
+  "Out for delivery": (i) => `Your ${i} is out for delivery`,
+  "Ready for pickup": (i) => `Your ${i} is ready for pickup`,
+  Problem: (i) => `Problem with your ${i}`,
+  Returning: (i) => `Your ${i} is on its way back`,
+  Delivered: (i) => `Your ${i} was delivered`,
+  Returned: (i) => `Your ${i} was returned`,
+};
+
+// As the row's second line names it (Shipments.js sourceLabel): "DHL",
+// "Amazon · Personal", "Amazon · Personal via DHL".
+function sourceLabel(s) {
+  let label = line(s.source, s.account);
+  if (s.carrier && s.carrier !== s.source && !s.carrier.startsWith(`${s.source} `)) label += ` via ${s.carrier}`;
+  return label;
+}
+
+// The cached product image (#58), only while its file is there; never a URL.
+const image = (s) => (typeof s.image === "string" && s.image.startsWith("/") && existsSync(s.image) ? { image: s.image } : {});
+
+const shipmentEvent = (s, kind, title, body) =>
+  ({ kind, key: s.key, status: s.status, title, body, url: s.url, ...image(s) });
+
 const EVENTS = {
-  status: (s) => ({ kind: "status", key: s.key, status: s.status, title: s.status, body: line(who(s), s.estimate?.text), url: s.url }),
-  delayed: (s) => ({ kind: "delayed", key: s.key, status: s.status, title: "Delayed", body: line(who(s), s.estimate?.text), url: s.url }),
-  new: (s) => ({
-    kind: "new", key: s.key, status: s.status, title: `New Shipment from ${sender(s)}`,
-    body: line(sender(s) === s.title ? null : s.title, s.status, s.estimate?.text), url: s.url,
-  }),
+  status: (s) => shipmentEvent(s, "status", (STATUS_TITLES[s.status] ?? ((i) => `Your ${i}: ${s.status}`))(item(s)),
+    line(sourceLabel(s), s.estimate?.text)),
+  delayed: (s) => shipmentEvent(s, "delayed", `Your ${item(s)} is delayed`, line(sourceLabel(s), s.estimate?.text)),
+  new: (s) => shipmentEvent(s, "new", `New shipment: ${item(s)}`, line(sourceLabel(s), s.status, s.estimate?.text)),
 };
 
 // Which event, if any, one Shipment gets this run (at most one: a notifying
