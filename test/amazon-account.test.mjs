@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DHL_LOGIN_PORT } from "../plugin/cli/ports.mjs";
-import { fakeChrome, fakeDhlAccount, makeWorld } from "./harness.mjs";
+import { fakeChrome, fakeDhl, fakeDhlAccount, fixture, makeWorld } from "./harness.mjs";
 import {
   captchaPage, cvfPage, historyPage, otpPage, signInPage, trackerPage, trackerPageWithoutState, wafPage,
 } from "./fixtures/amazon/pages.mjs";
@@ -44,9 +44,17 @@ const TRACKERS = {
   }, { carrierLine: "Versand durch Amazon" }),
 };
 
+// The DHL-carried Shipment's number is looked up anonymously on each refresh
+// (#27); here DHL doesn't know it yet, so Amazon's own reading stands.
+const unknownToDhl = (number) => {
+  const recorded = fixture("dhl/unknown.json");
+  return { json: JSON.parse(JSON.stringify(recorded).replaceAll(recorded.sendungen[0].id, number)) };
+};
+const ANONYMOUS = { [DHL_NUMBER]: unknownToDhl(DHL_NUMBER) };
+
 async function amazonWorld(t, routes = { history: HISTORY, trackers: TRACKERS }, options, worldOptions) {
   const chrome = fakeChrome(routes, options);
-  const world = await makeWorld({ chrome, ...worldOptions });
+  const world = await makeWorld({ chrome, transport: fakeDhl(ANONYMOUS), ...worldOptions });
   t.after(() => world.cleanup());
   return world;
 }
@@ -393,7 +401,7 @@ test("an account whose Chrome is already open is skipped, neither success nor fa
 
 test("offline, the account's Health doesn't change and the run is marked offline", async (t) => {
   const routes = { history: HISTORY, trackers: TRACKERS };
-  const world = await amazonWorld(t, routes);
+  const world = await amazonWorld(t, routes, {}, { transport: fakeDhl({ [DHL_NUMBER]: { network: true } }) });
   await connectedAccount(world);
   routes.history = { error: "net::ERR_INTERNET_DISCONNECTED" };
 
@@ -545,7 +553,7 @@ test("the run reads DHL first, then Amazon, and stays Refreshing… until Amazon
     return HISTORY;
   };
   const routes = { history: HISTORY, trackers: TRACKERS };
-  const dhl = fakeDhlAccount({ inbox: { json: { sendungen: [], rateLimited: false } } });
+  const dhl = fakeDhlAccount({ inbox: { json: { sendungen: [], rateLimited: false } }, anonymous: ANONYMOUS });
   const world = await amazonWorld(t, routes, {}, { transport: dhl });
   await connectedAccount(world);
   assert.equal(await world.run("login", "dhl"), 0);
@@ -563,7 +571,7 @@ test("the run reads DHL first, then Amazon, and stays Refreshing… until Amazon
 
 test("refresh --source limits the run to that Connection", async (t) => {
   const routes = { history: HISTORY, trackers: TRACKERS };
-  const dhl = fakeDhlAccount({ inbox: { json: { sendungen: [], rateLimited: false } } });
+  const dhl = fakeDhlAccount({ inbox: { json: { sendungen: [], rateLimited: false } }, anonymous: ANONYMOUS });
   const world = await amazonWorld(t, routes, {}, { transport: dhl });
   await connectedAccount(world, "Personal");
   await connectedAccount(world, "Business");
@@ -584,7 +592,7 @@ test("refresh --source limits the run to that Connection", async (t) => {
 
 test("when DHL got through, an Amazon network failure is the account's own and counts", async (t) => {
   const routes = { history: HISTORY, trackers: TRACKERS };
-  const dhl = fakeDhlAccount({ inbox: { json: { sendungen: [], rateLimited: false } } });
+  const dhl = fakeDhlAccount({ inbox: { json: { sendungen: [], rateLimited: false } }, anonymous: ANONYMOUS });
   const world = await amazonWorld(t, routes, {}, { transport: dhl });
   await connectedAccount(world);
   assert.equal(await world.run("login", "dhl"), 0);

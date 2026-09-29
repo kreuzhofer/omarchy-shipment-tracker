@@ -7,7 +7,8 @@
 // every id at once returns the whole list complete. Asking for a subset turns
 // the others back into stubs, so it is always all of them.
 import { connectionRecord, recordFailure, recordOk } from "../health.mjs";
-import { applyReading, manualDhlShipment, TERMINAL } from "../shipments.mjs";
+import { applyDhlReading, findByTrackingNumber } from "../merge.mjs";
+import { manualDhlShipment, TERMINAL } from "../shipments.mjs";
 import { renewIdToken } from "./auth.mjs";
 import { search } from "./search.mjs";
 import { readDhlElement } from "./status.mjs";
@@ -55,8 +56,9 @@ export async function syncDhl({ stateDir, transport, now }) {
 }
 
 // Applies a sync's outcome to the state files (under the state lock). Returns
-// the keys of the Shipments the Sendungsliste listed. Its Direction wins over a
-// manual add's default. A failed sync never changes or deletes Shipments.
+// the tracking numbers the Sendungsliste listed. Its Direction wins over a
+// manual add's default. A number an Amazon Shipment carries goes to that
+// Shipment (see merge.mjs). A failed sync never changes or deletes Shipments.
 export function applyDhlSync({ shipments, sources }, outcome, now) {
   const listed = new Set();
   if (!outcome.ok && outcome.reason === "not-set-up") return listed;
@@ -70,9 +72,9 @@ export function applyDhlSync({ shipments, sources }, outcome, now) {
   for (const element of outcome.elements) {
     const listing = readListing(element);
     const key = `dhl:${listing.trackingNumber}`;
-    if (dropped.has(key) || listed.has(key)) continue;
-    listed.add(key);
-    let shipment = shipments.shipments.find((s) => s.key === key);
+    if (dropped.has(key) || listed.has(listing.trackingNumber)) continue;
+    listed.add(listing.trackingNumber);
+    let shipment = findByTrackingNumber(shipments.shipments, listing.trackingNumber);
     if (!shipment) {
       shipment = { ...manualDhlShipment(listing.trackingNumber, now), connections: [], estimate: null };
       shipments.shipments.push(shipment);
@@ -83,8 +85,8 @@ export function applyDhlSync({ shipments, sources }, outcome, now) {
     // Terminal Shipments never change again.
     if (TERMINAL.has(shipment.status)) continue;
     const reading = listing.complete ? readDhlElement(element) : null;
-    if (reading) applyReading(shipment, reading, now);
-    if (listing.title) shipment.title = listing.title;
+    if (reading) applyDhlReading(shipment, reading, now);
+    if (listing.title && shipment.source === "DHL") shipment.title = listing.title;
   }
   recordOk(connection, now, outcome.elements.length);
   return listed;

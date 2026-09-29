@@ -7,6 +7,7 @@
 // Logs carry counts and Health only, never tracking numbers, names or addresses.
 import { addAccount, loginAmazon, removeAccount } from "./amazon/connection.mjs";
 import { login as loginDhl } from "./login.mjs";
+import { findByTrackingNumber } from "./merge.mjs";
 import { refresh } from "./refresh.mjs";
 import { manualDhlShipment, parseManualId, removeManual } from "./shipments.mjs";
 import { stateDirFor, updateState } from "./state.mjs";
@@ -70,7 +71,8 @@ async function add(args, stateDir, { now, log, out }) {
   }
   const added = await updateState(stateDir, ({ shipments }) => {
     const shipment = manualDhlShipment(parsed.id, now());
-    const existing = shipments.shipments.find((s) => s.key === shipment.key);
+    // A number an Amazon Shipment already carries joins that Shipment.
+    const existing = findByTrackingNumber(shipments.shipments, parsed.id);
     if (existing) {
       if (!existing.connections.includes("manual")) existing.connections.push("manual");
       return false;

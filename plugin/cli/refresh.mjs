@@ -1,9 +1,11 @@
 // One refresh run: the only writer of Status, Health and events[].
 //
 // Run order (spec #21): the DHL Connection (when logged in), then anonymous
-// lookups of manual adds the Sendungsliste didn't list, then each Amazon
-// account. `source` limits the run to one Connection key ("dhl" or
-// "amazon:<label>", for Retry); manual lookups then wait for the next full run.
+// lookups of the DHL numbers the Sendungsliste didn't list (manual adds and
+// numbers learned from Amazon), then each Amazon account, then lookups of DHL
+// numbers Amazon showed for the first time. Each number is looked up at most
+// once per run. `source` limits the run to one Connection key ("dhl" or
+// "amazon:<label>", for Retry); lookups then wait for the next full run.
 //
 // Network requests happen outside the state lock; their results are applied
 // under it, re-reading the files first so a concurrent `add` is never lost.
@@ -14,14 +16,17 @@ import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
 import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
-import { applyReading, TERMINAL } from "./shipments.mjs";
+import { applyDhlReading, carriedByDhl } from "./merge.mjs";
+import { TERMINAL } from "./shipments.mjs";
 import { readState, updateState } from "./state.mjs";
 
 const MAX_ROUNDS = 3;
 
-// Manual DHL adds are looked up anonymously, one request per number per run.
-// Terminal Shipments are never re-fetched.
-const needsLookup = (s) => s.source === "DHL" && s.connections.includes("manual") && !TERMINAL.has(s.status);
+// Manual DHL adds and DHL numbers learned from Amazon are looked up
+// anonymously, one request per number per run. Terminal Shipments are never
+// re-fetched.
+const needsLookup = (s) => !TERMINAL.has(s.status)
+  && ((s.source === "DHL" && s.connections.includes("manual")) || carriedByDhl(s));
 
 export async function refresh({ stateDir, env, now, transport, chrome, sleep, timeZone, log, source = null }) {
   const attempted = new Set();
@@ -50,43 +55,50 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
       return keys;
     });
     // The Sendungsliste already told us about these; no anonymous lookup.
-    for (const key of listed) attempted.add(key);
+    for (const trackingNumber of listed) attempted.add(trackingNumber);
     log(outcome.ok ? `refresh: dhl ok, ${outcome.elements.length} listed` : `refresh: dhl failed (${outcome.reason})`);
   }
 
-  for (let round = 0; round < (source === null ? MAX_ROUNDS : 0); round++) {
-    const snapshot = await readState(stateDir);
-    const targets = snapshot.shipments.shipments.filter((s) => needsLookup(s) && !attempted.has(s.key));
-    if (round > 0 && targets.length === 0) break;
+  // Anonymous lookups; `afterAmazon` leaves the run's events[] as they are.
+  const lookUp = async ({ afterAmazon = false } = {}) => {
+    for (let round = 0; round < (source === null ? MAX_ROUNDS : 0); round++) {
+      const snapshot = await readState(stateDir);
+      const targets = [...new Set(snapshot.shipments.shipments
+        .filter((s) => needsLookup(s) && !attempted.has(s.trackingNumber))
+        .map((s) => s.trackingNumber))];
+      if ((round > 0 || afterAmazon) && targets.length === 0) break;
 
-    const readings = new Map();
-    for (const s of targets) {
-      attempted.add(s.key);
-      const result = await lookupAnonymous(transport, s.trackingNumber);
-      const reading = result.ok ? readDhlElement(result.element) : null;
-      if (reading) {
-        readings.set(s.key, reading);
-        counts.lookedUp++;
-        if (reading.status === "Unknown") counts.unknown++;
-      } else {
-        counts.failed++;
-        if (result.reason === "network") counts.network++;
+      const readings = new Map();
+      for (const trackingNumber of targets) {
+        attempted.add(trackingNumber);
+        const result = await lookupAnonymous(transport, trackingNumber);
+        const reading = result.ok ? readDhlElement(result.element) : null;
+        if (reading) {
+          readings.set(trackingNumber, reading);
+          counts.lookedUp++;
+          if (reading.status === "Unknown") counts.unknown++;
+        } else {
+          counts.failed++;
+          if (result.reason === "network") counts.network++;
+        }
       }
+
+      await updateState(stateDir, ({ shipments, sources }) => {
+        const at = now();
+        for (const s of shipments.shipments) {
+          const reading = needsLookup(s) ? readings.get(s.trackingNumber) : undefined;
+          if (reading) applyDhlReading(s, reading, at);
+        }
+        if (!afterAmazon) shipments.events = [];
+        finishRun(sources, at);
+      });
     }
-
-    await updateState(stateDir, ({ shipments, sources }) => {
-      const at = now();
-      for (const s of shipments.shipments) {
-        const reading = readings.get(s.key);
-        if (reading) applyReading(s, reading, at);
-      }
-      shipments.events = [];
-      finishRun(sources, at);
-    });
-  }
+  };
+  await lookUp();
 
   if (source === null || source.startsWith("amazon:")) {
     await refreshAmazon({ stateDir, env, now, chrome, sleep, timeZone, log, counts, finishRun, only: source });
+    await lookUp({ afterAmazon: true });
   }
 
   // "Refreshing…" lasts the whole run, Amazon's paced page reads included.
