@@ -5,8 +5,10 @@ const verlauf = (e) => e?.sendungsdetails?.sendungsverlauf;
 const progress = (e) => verlauf(e)?.fortschritt;
 
 const STATUS_RULES = [
-  // An empty stub: the anonymous lookup of a number DHL doesn't know.
-  { status: "Unknown", when: (e) => !verlauf(e) || Boolean(e.sendungNichtGefunden) || (!verlauf(e).status && !(verlauf(e).events?.length)) },
+  // The spec's "element without sendungsverlauf". The anonymous lookup of a
+  // number DHL doesn't know does carry a sendungsverlauf (fortschritt 0, no
+  // events) but flags it with sendungNichtGefunden, as seen live in #7.
+  { status: "Unknown", when: (e) => !verlauf(e) || Boolean(e.sendungNichtGefunden) },
   { status: "Delivered", when: (e) => e.sendungsdetails.istZugestellt === true || (verlauf(e).maximalFortschritt > 0 && progress(e) === verlauf(e).maximalFortschritt) },
   { status: "Out for delivery", when: (e) => progress(e) === 4 },
   { status: "In transit", when: (e) => progress(e) === 2 || progress(e) === 3 },

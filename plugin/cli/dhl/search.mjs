@@ -15,7 +15,7 @@ export function trackingPageUrl(trackingNumber) {
 }
 
 // One anonymous lookup. Returns { ok: true, element } with the raw element for
-// this number, or { ok: false, reason } with a Health reason
+// this number, or { ok: false, reason } with the failure reason used in sources.json
 // ("network" | "http" | "shape" | "rate-limited").
 export async function lookupAnonymous(transport, trackingNumber) {
   const params = new URLSearchParams({ noRedirect: "true", language: "de", cid: "app", piececode: trackingNumber });

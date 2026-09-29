@@ -17,7 +17,7 @@ const code = await main(process.argv.slice(2), {
   exec,
 }).catch((e) => {
   // Never log a tracking number, even from an unexpected error message.
-  console.error(`error: ${String(e.message).replace(/[A-Za-z0-9]*\d[A-Za-z0-9]{7,}/g, "…")}`);
+  console.error(`error: ${String(e.message).replace(/\d{3}-\d{7}-\d{7}|[A-Za-z0-9]*\d[A-Za-z0-9]{7,}/g, "…")}`);
   return 1;
 });
 process.exitCode = code;

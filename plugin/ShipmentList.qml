@@ -18,8 +18,6 @@ Column {
   signal closeRequested()
   spacing: Style.space(8)
 
-  function focusAddField() { addField.forceActiveFocus() }
-
   // ---- Header
   Item {
     width: parent.width

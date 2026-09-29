@@ -15,8 +15,8 @@ Item {
 
   property var shipmentsState: ({ shipments: [], events: [] })
   property var sourcesState: ({ lastRun: null, refreshing: null, offline: false, connections: {} })
-  // Manual adds typed in the popup that `add` hasn't written yet: [{ id, running }].
-  property var pendingAdds: []
+  // Manual adds typed in the popup that `add` hasn't written yet: [{ id, text, at, running }].
+  property var queuedAdds: []
   property string addError: ""
   property double nowMs: Date.now()
 
@@ -25,13 +25,13 @@ Item {
     var known = {}
     var rows = (shipmentsState.shipments || []).slice()
     rows.forEach(function(s) { known[s.key] = true })
-    var pending = pendingAdds.filter(function(p) { return !known["dhl:" + p.id] }).map(function(p) {
-      return { key: "pending:" + p.id, direction: "Incoming", source: "DHL", account: null, carrier: "DHL",
+    var queued = queuedAdds.filter(function(p) { return !known["dhl:" + p.id] }).map(function(p) {
+      return { key: "queued:" + p.id, direction: "Incoming", source: "DHL", account: null, carrier: "DHL",
         title: p.id, status: "Unknown", estimate: { text: "Looking up…" }, delayed: false,
         url: Shipments.dhlTrackingUrl(p.id), changedAt: p.at, discoveredAt: p.at }
     })
     // Newest first until the urgency sort lands (#23).
-    return pending.concat(rows.sort(function(a, b) { return String(b.discoveredAt).localeCompare(String(a.discoveredAt)) }))
+    return queued.concat(rows.sort(function(a, b) { return String(b.discoveredAt).localeCompare(String(a.discoveredAt)) }))
   }
 
   function parse(text, fallback) {
@@ -78,18 +78,18 @@ Item {
     var id = Shipments.normalizeTrackingNumber(text)
     if (id === "") return false
     root.addError = ""
-    var list = root.pendingAdds.slice()
+    var list = root.queuedAdds.slice()
     list.push({ id: id, text: String(text).trim(), at: new Date().toISOString(), running: false })
-    root.pendingAdds = list
+    root.queuedAdds = list
     root.startNextAdd()
     return true
   }
 
   function startNextAdd() {
     if (addProcess.running) return
-    var next = root.pendingAdds.filter(function(p) { return !p.running })[0]
+    var next = root.queuedAdds.filter(function(p) { return !p.running })[0]
     if (!next) return
-    root.pendingAdds = root.pendingAdds.map(function(p) { return p === next ? { id: p.id, text: p.text, at: p.at, running: true } : p })
+    root.queuedAdds = root.queuedAdds.map(function(p) { return p === next ? { id: p.id, text: p.text, at: p.at, running: true } : p })
     addProcess.entryId = next.id
     addProcess.command = ["node", root.cliPath, "add", next.text]
     addProcess.running = true
@@ -105,7 +105,7 @@ Item {
         root.addError = message !== "" ? message : "Couldn't add it (is Node.js installed?)"
       }
       var done = addProcess.entryId
-      root.pendingAdds = root.pendingAdds.filter(function(p) { return p.id !== done })
+      root.queuedAdds = root.queuedAdds.filter(function(p) { return p.id !== done })
       root.reloadFiles()
       if (exitCode === 0) root.refresh()
       Qt.callLater(root.startNextAdd)
