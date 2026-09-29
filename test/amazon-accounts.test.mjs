@@ -328,3 +328,103 @@ test("logs never carry the Order IDs that were searched for", async (t) => {
   const text = world.logs.join("\n") + JSON.stringify(await world.sourcesFile());
   for (const secret of [MANUAL, P_ORDER, B_ORDER]) assert.ok(!text.includes(secret), secret);
 });
+
+// ---- Notifications (#28): an Order added by hand is never `new`, whichever
+// account owns it and whatever rows stand for it; its real changes notify once.
+
+const kinds = (events) => events.map((e) => [e.kind, e.key ?? null, e.status ?? null]);
+const DELIVERED = {
+  shortStatus: "DELIVERED",
+  progressTracker: { lastTransitionPercentComplete: 100, lastReachedMilestone: "DELIVERED", numberOfReachedMilestones: 4 },
+  promise: { promiseMessage: "Zugestellt: 29. September" },
+};
+
+async function refreshAt(world, iso) {
+  world.setClock(iso);
+  assert.equal(await world.run("refresh"), 0);
+  return (await world.shipmentsFile()).events;
+}
+
+// Business owns MANUAL (one package, In transit); Personal doesn't.
+function ownedByBusiness() {
+  const routes = accountsRoutes();
+  routes.accounts.Personal.search = { [MANUAL]: noMatch };
+  routes.accounts.Business.search = { [MANUAL]: historyPage([order(MANUAL, [0], "Drucker")]) };
+  routes.accounts.Business.trackers = { ...tracker(B_ORDER), ...tracker(MANUAL, 0, { shortStatus: "IN_TRANSIT" }) };
+  return routes;
+}
+
+test("the owning account's package rows replace a manual Order without a new event; a real change notifies once", async (t) => {
+  const routes = ownedByBusiness();
+  const world = await world2(t, routes);
+  await connect(world, "Personal", "Business");
+  await world.run("add", MANUAL);
+
+  const events = await refreshAt(world, "2026-09-29T11:00:00.000Z");
+
+  const s = await world.shipment(`amazon:${MANUAL}#0`);
+  assert.deepEqual(s.connections, ["amazon:Business", "manual"]);
+  assert.equal(await world.shipment(`amazon:${MANUAL}`), undefined);
+  assert.deepEqual(events, []);
+
+  routes.accounts.Business.trackers = { ...tracker(B_ORDER), ...tracker(MANUAL, 0, DELIVERED) };
+  assert.deepEqual(kinds(await refreshAt(world, "2026-09-29T12:00:00.000Z")), [["status", `amazon:${MANUAL}#0`, "Delivered"]]);
+  assert.deepEqual(await refreshAt(world, "2026-09-29T13:00:00.000Z"), []);
+});
+
+test("an account that owns a manual Order in its Login's first sync announces nothing, nor does the next refresh", async (t) => {
+  const routes = ownedByBusiness();
+  const world = await world2(t, routes);
+  await connect(world, "Personal");
+  await world.run("add", MANUAL);
+  await refreshAt(world, "2026-09-29T11:00:00.000Z");
+  assert.equal((await world.shipment(`amazon:${MANUAL}`)).linkOnly, true);
+
+  assert.equal(await world.run("accounts", "add", "Business", "--accept-risk"), 0);
+  assert.equal(await world.run("login", "amazon:Business"), 0);
+  assert.deepEqual((await world.shipmentsFile()).events, []);
+
+  assert.deepEqual((await world.shipment(`amazon:${MANUAL}#0`)).connections, ["amazon:Business", "manual"]);
+  assert.deepEqual(await refreshAt(world, "2026-09-29T12:00:00.000Z"), []);
+});
+
+test("adding an Order ID an account already shows announces nothing", async (t) => {
+  const world = await world2(t);
+  await connect(world, "Personal");
+  assert.equal(await world.run("add", P_ORDER), 0);
+
+  assert.deepEqual(await refreshAt(world, "2026-09-29T11:00:00.000Z"), []);
+});
+
+test("removing the owning account and another account taking the Order over announces nothing", async (t) => {
+  const routes = ownedByBusiness();
+  const world = await world2(t, routes);
+  await connect(world, "Personal", "Business");
+  await world.run("add", MANUAL);
+  assert.deepEqual(await refreshAt(world, "2026-09-29T11:00:00.000Z"), []);
+
+  assert.equal(await world.run("accounts", "remove", "Business"), 0);
+  assert.deepEqual((await world.shipment(`amazon:${MANUAL}`)).connections, ["manual"]);
+
+  // Personal is asked again and now owns it (the Order ID is back to "no
+  // account asked yet"), so a package row under Personal replaces it.
+  routes.accounts.Personal.search = { [MANUAL]: historyPage([order(MANUAL, [0], "Drucker")]) };
+  routes.accounts.Personal.trackers = { ...tracker(P_ORDER), ...tracker(MANUAL, 0, { shortStatus: "IN_TRANSIT" }) };
+  const events = await refreshAt(world, "2026-09-29T12:00:00.000Z");
+
+  assert.deepEqual((await world.shipment(`amazon:${MANUAL}#0`)).connections, ["amazon:Personal", "manual"]);
+  assert.deepEqual(events, []);
+});
+
+test("removing the owning account with no other owner leaves a link-only row and announces nothing", async (t) => {
+  const world = await world2(t, ownedByBusiness());
+  await connect(world, "Personal", "Business");
+  await world.run("add", MANUAL);
+  await refreshAt(world, "2026-09-29T11:00:00.000Z");
+
+  assert.equal(await world.run("accounts", "remove", "Business"), 0);
+  const events = await refreshAt(world, "2026-09-29T12:00:00.000Z");
+
+  assert.equal((await world.shipment(`amazon:${MANUAL}`)).linkOnly, true);
+  assert.deepEqual(events, []);
+});
