@@ -75,13 +75,23 @@ export function applyMailOrders(shipments, orders, dropped, now, timeZone) {
       list.push(s);
     }
     if (!s.connections.includes(KEY)) s.connections.push(KEY);
+    // A row from before #59 is migrated before this mail is applied, else
+    // its mail Status would stay (the migration below only sees rows the
+    // mailbox no longer names).
+    const legacy = isLegacy(s) ? { changedAt: s.changedAt } : null;
+    if (legacy) migrate(s, now, timeZone);
     s.probedBy ??= [];
     if (order.title) s.title = order.title;
     s.mail = { step: order.step, at: order.at, estimate: order.estimate };
-    // A newer mail is a real update for a dismissed row (dismiss.mjs).
+    // A newer mail is a real update for a dismissed row (dismiss.mjs); the
+    // mail the migration stands in for is not, nor a change of the row.
     s.trackingEvent = `mail@${order.at}`;
     s.lastSeenAt = at;
     settleHint(s, now, timeZone);
+    if (legacy) {
+      s.changedAt = legacy.changedAt;
+      if (s.dismissedAt) s.dismissedAs = markOf(s);
+    }
   }
 }
 
@@ -91,7 +101,7 @@ export function applyMailOrders(shipments, orders, dropped, now, timeZone) {
 export function settleMailOrders(shipments, now, timeZone) {
   for (const s of shipments.shipments) {
     if (!isMailOrder(s)) continue;
-    if (!s.mail) migrate(s, now, timeZone);
+    if (isLegacy(s)) migrate(s, now, timeZone);
     settleHint(s, now, timeZone);
   }
   absorbMailOrders(shipments.shipments);
@@ -99,10 +109,14 @@ export function settleMailOrders(shipments, now, timeZone) {
 
 // Before #59 the sender decided the row's Status. It becomes the hint's step;
 // the row keeps its title, Estimate and dates. Nothing is announced, and a
-// dismissed row stays dismissed.
+// dismissed row stays dismissed. An Order-level row mail knows never has a
+// Status of its own (an account's readings are package rows), so any Status
+// is mail's: also on rows #65's first runs half-migrated (a `mail` hint, but
+// the old Status kept, Terminal ones included).
 const LEGACY_STEPS = { Announced: "Ordered", "In transit": "Shipped", "Out for delivery": "Out for delivery", Delivered: "Delivered" };
+const isLegacy = (s) => !s.mail || s.status !== "Unknown";
 function migrate(s, now, timeZone) {
-  s.mail = {
+  s.mail ??= {
     step: LEGACY_STEPS[s.status] ?? null,
     at: s.lastSeenAt ?? s.changedAt,
     estimate: s.status === "Delivered" || !s.estimate?.from ? null : { from: s.estimate.from, to: s.estimate.to ?? s.estimate.from },

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { fakeChrome, fakeDhl, fakeDhlAccount, fakeMail, fixture, makeWorld } from "./harness.mjs";
 import { historyPage, trackerPage } from "./fixtures/amazon/pages.mjs";
 import {
-  graphError, marketplaceShipped, noAccount, newsletter, orderConfirmation, otherCarrier, outForDelivery, shippingConfirmation, shopShipped, softeriaAccount,
+  delivered, graphError, marketplaceShipped, noAccount, newsletter, orderConfirmation, otherCarrier, outForDelivery, shippingConfirmation, shopShipped, softeriaAccount,
 } from "./fixtures/mail/softeria.mjs";
 
 const EBAY_NUMBER = "00340434000000000501";
@@ -402,5 +402,61 @@ test("rows mail wrote before #59 lose their mail Status quietly and keep their d
     assert.equal(s.terminalAt, undefined);
     assert.deepEqual(s.probedBy, []);
   }
+  assert.deepEqual((await world.shipmentsFile()).events, []);
+});
+
+test("a Terminal row mail wrote before #59 whose mail is still in the window turns Unknown with the hint, and a half-migrated one is fixed, quietly", async (t) => {
+  // The live bug: the mailbox still names both Orders, so the run's mail
+  // reading came before the migration and the Delivered Status stayed.
+  const ORDER_B = "314-4444444-4444444";
+  const ORDER_C = "315-5555555-5555555";
+  const account = softeriaAccount({
+    mails: [
+      delivered({ orderId: ORDER_B, item: "Lampenschirm", at: "2026-09-25T12:00:00Z" }),
+      delivered({ orderId: ORDER_C, item: "Teekanne", at: "2026-09-26T12:00:00Z" }),
+    ],
+  });
+  const world = await mailWorld(t, account);
+  await connectMail(world, account);
+  const row = (orderId, fields) => ({
+    key: `amazon:${orderId}`, direction: "Incoming", source: "Amazon", account: null, carrier: null, connections: ["mail"],
+    title: "Altes Teil", delayed: false, orderId, url: `https://www.amazon.de/your-orders/order-details?orderID=${orderId}`,
+    discoveredAt: "2026-09-20T10:00:00.000Z", changedAt: "2026-09-25T12:00:00.000Z", lastSeenAt: "2026-09-29T09:00:00.000Z",
+    status: "Delivered", estimate: { from: "2026-09-25", to: "2026-09-25", text: "Delivered Fri 25 Sep" }, terminalAt: "2026-09-25T12:00:00.000Z",
+    notified: { status: "Delivered", delayed: false },
+    ...fields,
+  });
+  const file = JSON.parse(readFileSync(join(world.stateDir, "shipments.json"), "utf8"));
+  file.shipments = [
+    // Pre-#59 shape.
+    row(ORDER_B, { dismissedAt: "2026-09-26T10:00:00.000Z", dismissedAs: { status: "Delivered", estimate: "2026-09-25/2026-09-25", delayed: false, trackingEvent: null } }),
+    // What #65's first runs left: the hint, but still a Status.
+    row(ORDER_C, {
+      mail: { step: "Delivered", at: "2026-09-26T12:00:00.000Z", estimate: null }, hint: "Delivered · per mail, 26 Sep",
+      estimate: null, probedBy: [], trackingEvent: "mail@2026-09-26T12:00:00.000Z",
+    }),
+  ];
+  writeFileSync(join(world.stateDir, "shipments.json"), JSON.stringify(file));
+
+  assert.equal(await world.run("refresh"), 0);
+
+  const view = (s) => ({ status: s.status, hint: s.hint, estimate: s.estimate, terminalAt: s.terminalAt, notified: s.notified, dismissed: Boolean(s.dismissedAt) });
+  assert.deepEqual(view(await world.shipment(`amazon:${ORDER_B}`)), {
+    status: "Unknown", hint: "Delivered · per mail, 25 Sep", estimate: null, terminalAt: undefined, notified: { status: "Unknown", delayed: false }, dismissed: true,
+  });
+  assert.deepEqual(view(await world.shipment(`amazon:${ORDER_C}`)), {
+    status: "Unknown", hint: "Delivered · per mail, 26 Sep", estimate: null, terminalAt: undefined, notified: { status: "Unknown", delayed: false }, dismissed: false,
+  });
+  assert.deepEqual((await world.shipmentsFile()).events, []);
+
+  // No longer Terminal: they go 30 days after their last change once the
+  // mail has left the window, like any other row mail knows.
+  account.mails = [];
+  world.setClock("2026-10-25T11:00:00.000Z");
+  await world.run("refresh");
+  assert.ok(await world.shipment(`amazon:${ORDER_B}`));
+  world.setClock("2026-10-26T13:00:00.000Z");
+  await world.run("refresh");
+  assert.deepEqual(await keys(world), []);
   assert.deepEqual((await world.shipmentsFile()).events, []);
 });
