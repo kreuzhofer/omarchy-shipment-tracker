@@ -1,12 +1,25 @@
-// PROTOTYPE popup host for #9: renders one of three structurally different
-// variants plus a loud switcher (←/→ or click). Not production code.
+// PROTOTYPE popup host for #18 (onboarding), built on the #9 popup prototype.
+// Renders one of three structurally different onboarding variants plus a loud
+// switcher (←/→ or click). FAKE backend: every login is a timer, all state is
+// in memory and resets with the shell. Not production code.
 //
-// Drive it from a shell:
-//   omarchy-shell kreuzhofer.shipments-prototype show A   (B, C)
-//   omarchy-shell kreuzhofer.shipments-prototype days 30
-//   omarchy-shell kreuzhofer.shipments-prototype empty true   (no-Shipments state)
-//   omarchy-shell kreuzhofer.shipments-prototype scroll   (scroll list to end)
+// Drive it from a shell (every state is reachable):
+//   omarchy-shell kreuzhofer.shipments-prototype show A|B|C     open variant
 //   omarchy-shell kreuzhofer.shipments-prototype hide
+//   omarchy-shell kreuzhofer.shipments-prototype preset fresh|dhl|full|needslogin|down
+//   omarchy-shell kreuzhofer.shipments-prototype page <name>
+//       A: list|welcome|dhl|amazon|mail|notify|done
+//       B: list|sources|sources:dhl|sources:amazon|sources:mail|sources:<label>
+//       C: list|dhl|amazon|mail|notify|<label>   (open that setup card)
+//   omarchy-shell kreuzhofer.shipments-prototype dhl none|connecting|syncing|ok|needs-login|source-down
+//   omarchy-shell kreuzhofer.shipments-prototype mail none|code|syncing|ok|needs-login
+//   omarchy-shell kreuzhofer.shipments-prototype amazon <label> none|connecting|ok|needs-login
+//   omarchy-shell kreuzhofer.shipments-prototype login <dhl|mail|amazon:<label>>   start a fake login
+//   omarchy-shell kreuzhofer.shipments-prototype draft "<label>" true|false        Amazon add form: label + risk opt-in
+//   omarchy-shell kreuzhofer.shipments-prototype node true|false                   Node.js present?
+//   omarchy-shell kreuzhofer.shipments-prototype hold true|false                   freeze fake timers (screenshots)
+//   omarchy-shell kreuzhofer.shipments-prototype days 7|30
+//   omarchy-shell kreuzhofer.shipments-prototype scroll
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -20,54 +33,49 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
-  property int days: 7
   property int variantIndex: 0
   readonly property var variants: [
-    { key: "A", name: "Urgency list", file: "VariantA.qml" },
-    { key: "B", name: "Sections by what needs you", file: "VariantB.qml" },
-    { key: "C", name: "Direction tabs + progress cards", file: "VariantC.qml" }
+    { key: "A", name: "Wizard in the popup", file: "OnboardingA.qml" },
+    { key: "B", name: "Sources page", file: "OnboardingB.qml" },
+    { key: "C", name: "Setup cards in the list", file: "OnboardingC.qml" }
   ]
   readonly property var variant: variants[variantIndex]
 
-  // Shared fake state every variant renders. Manual adds live only in memory.
-  property var added: []
-  property string lastRefresh: Fake.lastRefresh
-  property bool refreshing: false
-  property bool emptyMode: false // IPC "empty": preview the no-Shipments state
-  readonly property var shipments: emptyMode ? added : Fake.sorted(added.concat(Fake.visible(days)))
-  readonly property var sources: Fake.sources
-  readonly property var troubled: Fake.troubled()
-  readonly property bool notificationsOn: hostWidget ? hostWidget.notificationsOn : true
-  readonly property color fg: bar ? bar.foreground : Color.foreground
-  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-
-  function cycle(delta) { variantIndex = (variantIndex + delta + variants.length) % variants.length }
-  function openUrl(url) { Qt.openUrlExternally(url); root.close() }
-  function addManual(text) {
-    var id = String(text || "").trim()
-    if (id === "") return false
-    added = [Fake.manual(id)].concat(added)
-    return true
+  FakeBackend {
+    id: backend
+    hostWidget: root.hostWidget
+    fg: root.bar ? root.bar.foreground : Color.foreground
+    fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+    onCloseRequested: root.close()
   }
-  function refresh() { refreshing = true; refreshTimer.restart() }
-  function toggleNotifications() { if (hostWidget) hostWidget.setNotifications(!notificationsOn) }
+  function cycle(delta) { variantIndex = (variantIndex + delta + variants.length) % variants.length; backend.page = "" }
   function switchPanel(direction) {
     if (bar && typeof bar.switchPanelFrom === "function") return bar.switchPanelFrom(hostWidget || root, direction)
     return false
   }
-
-  Timer { id: refreshTimer; interval: 1200; onTriggered: { root.refreshing = false; root.lastRefresh = new Date().toISOString() } }
+  // Read by BarWidget.
+  readonly property var shipments: backend.shipments
+  readonly property var troubled: backend.troubled
+  readonly property bool anySource: backend.anySource
 
   IpcHandler {
     target: "kreuzhofer.shipments-prototype"
     function show(key: string): void {
-      for (var i = 0; i < root.variants.length; i++) if (root.variants[i].key === key) root.variantIndex = i
+      for (var i = 0; i < root.variants.length; i++) if (root.variants[i].key === key) { root.variantIndex = i; backend.page = "" }
       if (!root.opened) root.open()
     }
-    function days(n: int): void { root.days = n }
     function hide(): void { root.close() }
-    function empty(on: bool): void { root.emptyMode = on }
-    function scroll(): void { if (body.item) body.item.scrollToEnd() }
+    function preset(name: string): void { backend.applyPreset(name) }
+    function page(name: string): void { backend.page = name }
+    function dhl(state: string): void { backend.schedule("dhl", 0, ""); backend.setState("dhl", state) }
+    function mail(state: string): void { backend.schedule("mail", 0, ""); backend.setState("mail", state) }
+    function amazon(label: string, state: string): void { backend.schedule("amazon:" + label, 0, ""); backend.setState("amazon:" + label, state) }
+    function login(key: string): void { backend.login(key) }
+    function draft(label: string, risk: bool): void { backend.addingAccount = true; backend.draftLabel = label; backend.draftRisk = risk }
+    function node(ok: bool): void { backend.nodeOk = ok }
+    function hold(on: bool): void { backend.hold = on }
+    function days(n: int): void { backend.days = n }
+    function scroll(): void { if (body.item && body.item.scrollToEnd) body.item.scrollToEnd() }
   }
 
   KeyboardPanel {
@@ -83,7 +91,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      // Let the manual-add field receive h/j/k/l/x and arrows while typing.
+      // Let text fields receive h/j/k/l/x and arrows while typing.
       blocked: body.item ? body.item.editing === true : false
       onMoveRequested: function(dx, dy) { if (dx !== 0) root.cycle(dx) }
       onCloseRequested: root.close()
@@ -99,7 +107,7 @@ Panel {
           id: body
           width: parent.width
           source: Qt.resolvedUrl(root.variant.file)
-          onLoaded: item.host = root
+          onLoaded: item.host = backend
         }
 
         // Switcher, deliberately loud so it reads as tooling, not design.
@@ -116,7 +124,7 @@ Panel {
             spacing: Style.space(10)
             Text { text: "◀"; color: "#111"; font.pixelSize: Style.font.body
               MouseArea { anchors.fill: parent; anchors.margins: -6; onClicked: root.cycle(-1) } }
-            Text { text: "PROTOTYPE " + root.variant.key + " · " + root.variant.name + " · " + root.days + "d"; color: "#111"; font.pixelSize: Style.font.bodySmall; font.bold: true }
+            Text { text: "PROTOTYPE #18 " + root.variant.key + " · " + root.variant.name; color: "#111"; font.pixelSize: Style.font.bodySmall; font.bold: true }
             Text { text: "▶"; color: "#111"; font.pixelSize: Style.font.body
               MouseArea { anchors.fill: parent; anchors.margins: -6; onClicked: root.cycle(1) } }
           }

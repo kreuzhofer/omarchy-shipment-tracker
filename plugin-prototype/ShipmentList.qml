@@ -1,4 +1,5 @@
-// PROTOTYPE variant A: one dense list sorted by urgency (#9).
+// PROTOTYPE: the chosen #9 popup (variant A), reused by every #18 onboarding
+// variant. Hooks: gear button, banner action, empty-state copy, top/bottom slots.
 // Header: title, last updated, 7d/30d, refresh. Needs-login banner.
 // Rows: status glyph | title + Delayed tag | Estimate; second line Status ·
 // Direction · Source/account/Carrier · age. Footer: manual add + notifications.
@@ -10,7 +11,18 @@ import "FakeData.js" as Fake
 Column {
   id: root
   property var host: null
-  readonly property bool editing: addField.activeFocus
+  readonly property bool editing: addField.activeFocus || (topLoader.item && topLoader.item.editing === true)
+  property bool showGear: false
+  property string gearTip: "Sources"
+  signal gearClicked()
+  signal bannerAction(var src)        // Log in / Retry / Cancel on a Source banner
+  property string emptyTitle: "No Shipments in the last " + (host ? host.days : 7) + " days"
+  property string emptyText: ""
+  property string emptyActionText: ""
+  signal emptyAction()
+  property Component topComponent: null     // between banners and list
+  property Component bottomComponent: null  // between list and footer
+  property string addPlaceholder: "Add tracking number or Amazon order ID"
   readonly property color fg: host ? host.fg : Color.foreground
   readonly property string ff: host ? host.fontFamily : Style.font.family
   readonly property int rowHeight: Style.space(46)
@@ -37,7 +49,7 @@ Column {
       Text {
         width: parent.width
         elide: Text.ElideRight
-        text: root.summary() + (root.host ? (root.host.refreshing ? "Refreshing…" : "Updated " + Fake.age(root.host.lastRefresh)) : "")
+        text: !root.host ? "" : !root.host.anySource ? "No Sources connected · manual add only" : root.summary() + (root.host.refreshing ? "Refreshing…" : "Updated " + Fake.age(root.host.lastRefresh))
         color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.caption
       }
     }
@@ -48,6 +60,13 @@ Column {
       spacing: Style.space(4)
       Button { text: "7 days"; selected: root.host && root.host.days === 7; fontSize: Style.font.bodySmall; onClicked: root.host.days = 7 }
       Button { text: "30 days"; selected: root.host && root.host.days === 30; fontSize: Style.font.bodySmall; onClicked: root.host.days = 30 }
+      PanelActionButton {
+        visible: root.showGear
+        iconText: "\u{F0493}"
+        tooltipText: root.gearTip
+        foreground: root.fg
+        onClicked: root.gearClicked()
+      }
       PanelActionButton {
         iconText: "\u{F0450}"
         tooltipText: "Refresh now"
@@ -65,8 +84,9 @@ Column {
       width: root.width
       height: bannerRow.implicitHeight + Style.space(12)
       radius: Style.cornerRadius
-      color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.18)
-      border.color: Color.urgent
+      readonly property bool bad: modelData.state === "needs-login" || modelData.state === "source-down"
+      color: bad ? Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.18) : Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.14)
+      border.color: bad ? Color.urgent : Color.accent
       border.width: 1
       Row {
         id: bannerRow
@@ -74,11 +94,16 @@ Column {
         anchors.leftMargin: Style.space(10)
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(8)
-        Text { text: "\u{F033E}"; color: Color.urgent; font.family: root.ff; font.pixelSize: Style.font.icon; anchors.verticalCenter: parent.verticalCenter }
+        Text { text: modelData.state === "needs-login" ? "\u{F033E}" : modelData.state === "source-down" ? "\u{F0164}" : modelData.state === "syncing" ? "\u{F04E6}" : "\u{F059F}"; color: modelData.state === "needs-login" || modelData.state === "source-down" ? Color.urgent : Color.accent; font.family: root.ff; font.pixelSize: Style.font.icon; anchors.verticalCenter: parent.verticalCenter }
         Text {
           width: root.width - Style.space(120)
           elide: Text.ElideRight
-          text: modelData.source + (modelData.account ? " · " + modelData.account : "") + " needs a login · list may be incomplete"
+          readonly property string name: modelData.source + (modelData.account ? " · " + modelData.account : "")
+          text: modelData.state === "needs-login" ? name + " needs a login · list may be incomplete"
+            : modelData.state === "source-down" ? name + " can't be read right now · retrying hourly"
+            : modelData.state === "connecting" ? "Chrome is open · log in to " + name + " there"
+            : modelData.state === "code" ? "Enter " + root.host.deviceCode + " at microsoft.com/devicelogin"
+            : name + " logged in · syncing…"
           color: root.fg; font.family: root.ff; font.pixelSize: Style.font.bodySmall
           anchors.verticalCenter: parent.verticalCenter
         }
@@ -87,11 +112,16 @@ Column {
         anchors.right: parent.right
         anchors.rightMargin: Style.space(6)
         anchors.verticalCenter: parent.verticalCenter
-        text: "Log in"; bordered: true; fontSize: Style.font.bodySmall
-        onClicked: root.host.openUrl(modelData.loginUrl)
+        visible: modelData.state !== "syncing"
+        text: modelData.state === "needs-login" ? "Log in" : modelData.state === "source-down" ? "Retry" : modelData.state === "code" ? "Open page" : "Cancel"
+        bordered: true; fontSize: Style.font.bodySmall
+        onClicked: root.bannerAction(modelData)
       }
     }
   }
+
+  Loader { id: topLoader; width: parent.width; active: root.topComponent !== null; visible: active; sourceComponent: root.topComponent
+    onLoaded: if (item.host !== undefined) item.host = Qt.binding(function() { return root.host }) }
 
   // ---- The list: 5 rows visible, scrolls to more.
   ListView {
@@ -202,12 +232,27 @@ Column {
     Text { anchors.horizontalCenter: parent.horizontalCenter; text: "\u{F03D7}"; color: Qt.darker(root.fg, 1.8); font.family: root.ff; font.pixelSize: Style.font.display }
     Text {
       anchors.horizontalCenter: parent.horizontalCenter
-      text: "No Shipments in the last " + (root.host ? root.host.days : 7) + " days"
+      text: root.emptyTitle
       color: Qt.darker(root.fg, 1.3); font.family: root.ff; font.pixelSize: Style.font.body
+    }
+    Text {
+      visible: root.emptyText !== ""
+      width: parent.width - Style.space(40)
+      anchors.horizontalCenter: parent.horizontalCenter
+      horizontalAlignment: Text.AlignHCenter
+      wrapMode: Text.WordWrap
+      text: root.emptyText
+      color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.bodySmall
     }
     Button {
       anchors.horizontalCenter: parent.horizontalCenter
-      visible: root.host && root.host.days === 7
+      visible: root.emptyActionText !== ""
+      text: root.emptyActionText; selected: true; fontSize: Style.font.bodySmall
+      onClicked: root.emptyAction()
+    }
+    Button {
+      anchors.horizontalCenter: parent.horizontalCenter
+      visible: root.emptyActionText === "" && root.host && root.host.anySource && root.host.days === 7
       text: "Show 30 days"; bordered: true; fontSize: Style.font.bodySmall
       onClicked: root.host.days = 30
     }
@@ -221,6 +266,8 @@ Column {
     color: Qt.darker(root.fg, 1.6); font.family: root.ff; font.pixelSize: Style.font.caption
   }
 
+  Loader { width: parent.width; active: root.bottomComponent !== null; visible: active; sourceComponent: root.bottomComponent }
+
   PanelSeparator { foreground: root.fg }
 
   // ---- Footer: manual add + notifications toggle
@@ -230,7 +277,7 @@ Column {
     TextField {
       id: addField
       width: parent.width - addButton.width - bell.width - Style.space(12)
-      placeholderText: "Add tracking number or Amazon order ID"
+      placeholderText: root.addPlaceholder
       foreground: root.fg
       font.family: root.ff
       font.pixelSize: Style.font.bodySmall

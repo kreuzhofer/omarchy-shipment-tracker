@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "author": "kreuzhofer",
   "license": "MIT",
-  "description": "THROWAWAY popup UX prototype for issue #9. Fake data only.",
+  "description": "THROWAWAY popup (#9) and onboarding (#18) prototype. Fake data and fake logins only.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"

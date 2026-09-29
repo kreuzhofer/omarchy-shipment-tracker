@@ -1,4 +1,4 @@
-// PROTOTYPE bar widget for the popup UX prototype (#9). Fake data only.
+// PROTOTYPE bar widget for the popup (#9) and onboarding (#18) prototypes. Fake data only.
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -10,8 +10,12 @@ BarWidget {
 
   // Active (bar "active" colour) when something needs the user: Ready for
   // pickup, Problem, or a Source that needs a login. No count badge.
-  readonly property int attentionCount: Fake.visible(30).filter(function(s) { return Fake.attention[s.status] }).length + Fake.troubled().length
-  readonly property int todayCount: Fake.visible(30).filter(function(s) { return s.status === "Out for delivery" }).length
+  // Before any Source is set up the icon stays idle: an unconfigured widget
+  // is not something that "needs you" (#18).
+  readonly property var host: panelLoader.item
+  readonly property var shown: host ? host.shipments : []
+  readonly property int attentionCount: shown.filter(function(s) { return Fake.attention[s.status] }).length + (host ? host.troubled.filter(function(t) { return t.state === "needs-login" || t.state === "source-down" }).length : 0)
+  readonly property int todayCount: shown.filter(function(s) { return s.status === "Out for delivery" }).length
   readonly property bool notificationsOn: setting("notifications", true) === true
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
@@ -56,7 +60,7 @@ BarWidget {
     bar: root.bar
     text: "\u{F03D7}"
     active: root.attentionCount > 0
-    tooltipText: root.opened ? "" : (root.attentionCount > 0 ? root.attentionCount + " need you" : "Shipments") + (root.todayCount > 0 ? " · " + root.todayCount + " arriving today" : "")
+    tooltipText: root.opened ? "" : (root.host && !root.host.anySource && root.shown.length === 0) ? "Shipments · not set up" : (root.attentionCount > 0 ? root.attentionCount + " need you" : "Shipments") + (root.todayCount > 0 ? " · " + root.todayCount + " arriving today" : "")
     onPressed: function(b) { root.toggle() }
   }
 }

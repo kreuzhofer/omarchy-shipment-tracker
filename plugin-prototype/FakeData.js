@@ -1,4 +1,4 @@
-// PROTOTYPE fake Shipments for the popup variants (#9). Covers every Status
+// PROTOTYPE fake Shipments for the popup (#9) and onboarding (#18) variants. Covers every Status
 // in CONTEXT.md, both Directions, all Sources, and the 7- vs 30-day window.
 .pragma library
 
@@ -67,15 +67,34 @@ var lastRefresh = new Date(Date.now() - 12 * 6e4).toISOString()
 
 function troubled() { return sources.filter(function(s) { return s.state !== "ok" }) }
 
+// Onboarding (#18): only Shipments from connected Sources are visible. Fake
+// Amazon rows tagged "Personal" belong to the 1st connected account, "Business"
+// to the 2nd, and are shown under whatever label the user gave that account.
+function forSources(days, dhlOn, accountLabels) {
+  var slot = { "Personal": 0, "Business": 1 }
+  var out = []
+  visible(days).forEach(function(s) {
+    if (s.source === "DHL") { if (dhlOn) out.push(s); return }
+    var label = accountLabels[slot[s.account]]
+    if (!label) return
+    var copy = {}
+    for (var k in s) copy[k] = s[k]
+    copy.account = label
+    out.push(copy)
+  })
+  return out
+}
+
 function sorted(list) {
   return list.slice().sort(function(a, b) { return (rank[a.status] - rank[b.status]) || (new Date(b.changed) - new Date(a.changed)) })
 }
 
 // A manually added Shipment starts as Unknown until the first lookup.
-function manual(id) {
+// Without an Amazon account that owns the Order it stays link-only (#10).
+function manual(id, amazonAccount) {
   var amazon = /^\d{3}-\d{7}-\d{7}$/.test(id)
-  return { id: "m-" + id, direction: "Incoming", source: amazon ? "Amazon" : "DHL", account: amazon ? "Personal" : "", carrier: amazon ? "" : "DHL",
-    title: (amazon ? "Order " : "") + id, status: "Unknown", step: 0, estimate: "Looking up…", delayed: false, changed: new Date().toISOString(),
+  return { id: "m-" + id, direction: "Incoming", source: amazon ? "Amazon" : "DHL", account: amazon ? (amazonAccount || "") : "", carrier: amazon ? "" : "DHL",
+    title: (amazon ? "Order " : "") + id, status: "Unknown", step: 0, estimate: amazon && !amazonAccount ? "Link only · no Amazon account" : "Looking up…", delayed: false, changed: new Date().toISOString(),
     url: amazon ? "https://www.amazon.de/gp/your-account/order-details?orderID=" + id : "https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=" + id }
 }
 
