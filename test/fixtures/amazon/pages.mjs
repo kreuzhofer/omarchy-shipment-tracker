@@ -138,6 +138,31 @@ ${orders.map(businessOrderCard).join("\n")}${PENDING_CARD.repeat(pending)}
 </div></div>${footer}</body></html>`;
 }
 
+// An order search that found nothing (#75), not in the history's markup:
+// the personal layout keeps its search header (`#searchOrdersInput`) above a
+// "no results" line, the Business layout its `#abYoSearchBar`. The live
+// pages were not recorded; these follow the history pages' own headers.
+export function searchNoResultsPage(query) {
+  return `${head("Meine Bestellungen")}<body>${NAV}
+<div class="a-section your-orders-search">
+<form method="get" action="/your-orders/search/ref=ppx_yo2ov_dt_b_search" class="a-spacing-none">
+<div class="a-search a-span12" aria-label="Alle Bestellungen durchsuchen"><input type="search" id="searchOrdersInput" value="${esc(query)}" name="search" class="a-input-text a-span12"></div></form>
+<div class="a-row a-spacing-top-medium"><h2>Suchergebnisse</h2><p>Es wurden keine Bestellungen gefunden, die „${esc(query)}“ entsprechen.</p></div>
+</div>${RECOMMENDATIONS}</body></html>`;
+}
+
+export function businessSearchNoResultsPage(query) {
+  return `${head("Meine Bestellungen")}<body>${NAV}
+<div id="yourOrderPageTitle" class="a-column a-span5"><h1>Meine Bestellungen</h1></div>
+<div id="yourOrderTabFilter" class="a-row"><div class="a-search a-span7"><input type="search" id="abYoSearchBar" value="${esc(query)}" placeholder="Artikel-, Bestell- oder Auftragsnummer"></div></div>
+<div id="yourOrderSearchResults" class="a-section"><div class="a-box a-alert-info"><div class="a-box-inner">Keine Ergebnisse für „${esc(query)}“</div></div></div>
+</body></html>`;
+}
+
+// A page at the order search's URL that is neither the history's markup nor
+// a recognisable empty search: a layout nobody knows yet.
+export const unknownSearchPage = () => `${head("Amazon.de")}<body>${NAV}<div id="a-page"><div class="new-orders-app" data-app="orders"></div></div></body></html>`;
+
 // A progress-tracker page. `state` is merged over a delivered-by-DHL default;
 // `carrierLine` is the delivery card's heading ("Versendet mit DHL").
 export function trackerPage(state, { carrierLine } = {}) {

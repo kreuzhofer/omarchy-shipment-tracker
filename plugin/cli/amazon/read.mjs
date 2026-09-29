@@ -3,7 +3,7 @@
 // pages for non-Terminal Shipments), reached through the history's own links
 // and search form, with 4–12 s random gaps. Any sign-in or challenge page
 // stops the run at once; nothing is ever submitted or clicked.
-import { classifyPage, HISTORY_URL, inferCarrier, orderSearchUrl, parseHistory, parseTracker, renderState } from "./pages.mjs";
+import { classifyPage, HISTORY_URL, inferCarrier, isEmptyOrderSearch, orderSearchUrl, parseHistory, parseTracker, renderState } from "./pages.mjs";
 import { amazonStatus, parseEstimate } from "./status.mjs";
 import { isDropped } from "../retention.mjs";
 import { TERMINAL } from "../shipments.mjs";
@@ -29,7 +29,11 @@ const RENDER_WAIT_MS = 10_000;
 // `lookFor`: Order IDs added by hand that this account may own. One listed in
 // the history is owned at no cost; any other is searched for with the
 // history's own order search, one page each, which counts against the cap.
-// `owned` and `notOwned` list what was found out.
+// `owned` and `notOwned` list what was found out. A search page that says it
+// found nothing is `notOwned` (#75). A search page that can't be read (an
+// unknown layout, or cards still not rendered) never stops the run once the
+// history was read: that Order is left for the next run and counted in
+// `unprobed`.
 //
 // `dropped` holds the keys retention dropped; their tracker pages are never
 // read again (see retention.mjs).
@@ -41,7 +45,7 @@ const RENDER_WAIT_MS = 10_000;
 // read); `business`: the history was in the Business layout. `boxes`: the history's and order searches' delivery boxes for the
 // diagnostic line ({ boxes, withImage, hosts }, no IDs or URLs).
 export async function readAccount(tab, { known, sleep, now, timeZone, historyLoaded = false, lookFor = [], dropped = new Set() }) {
-  const result = { reason: null, readings: [], pages: 0, unmapped: 0, owned: [], notOwned: [], images: [], listed: null, boxes: { boxes: 0, withImage: 0, hosts: {} } };
+  const result = { reason: null, readings: [], pages: 0, unmapped: 0, owned: [], notOwned: [], unprobed: 0, images: [], listed: null, boxes: { boxes: 0, withImage: 0, hosts: {} } };
   const noteBoxes = ({ stats }) => {
     result.boxes.boxes += stats.boxes;
     result.boxes.withImage += stats.withImage;
@@ -80,7 +84,11 @@ export async function readAccount(tab, { known, sleep, now, timeZone, historyLoa
     const page = await readRenderedPage(tab, sleep);
     if (page.reason) return { ...result, reason: page.reason };
     const found = parseHistory(page.html);
-    if (!found.ok) return { ...result, reason: "shape" };
+    if (!found.ok || (!found.orderIds.has(orderId) && renderState(page.html).pending)) {
+      if (isEmptyOrderSearch(page.url, page.html)) result.notOwned.push(orderId);
+      else result.unprobed++;
+      continue;
+    }
     noteBoxes(found);
     if (!found.orderIds.has(orderId)) {
       result.notOwned.push(orderId);
@@ -127,7 +135,7 @@ function trackerPagesToRead(shipments, known, cap) {
 async function readPage(tab) {
   const url = await tab.url();
   const html = await tab.html();
-  return { reason: classifyPage(url, html), html };
+  return { reason: classifyPage(url, html), url, html };
 }
 
 // readPage for a history or order search page. A Business-layout page ships

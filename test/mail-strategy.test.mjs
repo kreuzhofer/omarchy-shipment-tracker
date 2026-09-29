@@ -6,10 +6,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fakeChrome, fakeDhl, fakeDhlAccount, fakeMail, fixture, makeWorld } from "./harness.mjs";
+import { fakeChrome, fakeDhl, fakeDhlAccount, fakeMail, fixture, makeWorld, toolAnswer } from "./harness.mjs";
 import { historyPage, trackerPage } from "./fixtures/amazon/pages.mjs";
 import {
-  delivered, graphError, marketplaceShipped, noAccount, newsletter, orderConfirmation, otherCarrier, outForDelivery, shippingConfirmation, shopShipped, softeriaAccount,
+  delivered, graphError, marketplaceShipped, messageList, noAccount, newsletter, orderConfirmation, otherCarrier, outForDelivery, shippingConfirmation, shopShipped, softeriaAccount,
 } from "./fixtures/mail/softeria.mjs";
 
 const EBAY_NUMBER = "00340434000000000501";
@@ -569,4 +569,95 @@ test("a Terminal Shipment is searched only when it turned Terminal in the last 7
     ["Kürzlich geliefert", null, "Von Hand", "Vintage Kamera"]);
   assert.equal((await world.shipment(`dhl:${RECENT}`)).status, "Delivered");
   assert.deepEqual((await world.shipmentsFile()).events, []);
+});
+
+// ---- 6. The item search, diagnosed (#75)
+
+const itemSearchLines = (world) => world.logs.filter((l) => l.startsWith("refresh: mail item search"));
+
+test("the item search logs its counts, never a number or a subject", async (t) => {
+  const [NAMED_NUMBER, SILENT_NUMBER] = ["00340434000000000901", "00340434000000000902"];
+  const account = softeriaAccount({
+    mails: [marketplaceShipped({ trackingNumber: NAMED_NUMBER, item: "Alte Schreibmaschine", at: "2026-09-01T10:00:00Z" })],
+  });
+  const routes = Object.fromEntries([NAMED_NUMBER, SILENT_NUMBER].map((n) => [n, dhlElement("in-transit", n)]));
+  const world = await mailWorld(t, account, { transport: fakeDhl(routes) });
+  await connectMail(world, account);
+  for (const n of [NAMED_NUMBER, SILENT_NUMBER]) await world.run("add", n);
+
+  await world.run("refresh");
+
+  // The fake search returns every mail for any query, as a fuzzy $search may.
+  assert.deepEqual(itemSearchLines(world), [
+    "refresh: mail item search 2 number(s), 0 failed, 2 mail(s) returned, 1 naming its number, 0 found in recent mail; items named via schema 0, parser 1, subject 0",
+  ]);
+  const logs = world.logs.join("\n");
+  for (const secret of [NAMED_NUMBER, SILENT_NUMBER, "Schreibmaschine", "Versendet"]) assert.ok(!logs.includes(secret), secret);
+
+  // Nothing left to search: no line.
+  world.logs.length = 0;
+  world.setClock("2026-09-29T11:00:00.000Z");
+  await world.run("refresh");
+  assert.deepEqual(itemSearchLines(world), []);
+});
+
+test("a number Graph's search doesn't find is named from the mail the run already fetched", async (t) => {
+  const item = "Kupferkessel";
+  const account = softeriaAccount({
+    // In the 14-day window of the DHL search, with the number only in a link
+    // in the HTML and in groups in the text body.
+    mails: [marketplaceShipped({ trackingNumber: KNOWN_NUMBER, item, at: "2026-09-27T16:00:00Z" })],
+  });
+  account.mails[0].body.content = account.mails[0].body.content.replace(KNOWN_NUMBER, KNOWN_NUMBER.replace(/(\d{4})(?=\d)/g, "$1 "));
+  // Graph's $search finds nothing for the number itself.
+  account.list = (args) => (args.search === `"${KNOWN_NUMBER}"` ? messageList([]) : null);
+  const dhl = fakeDhlAccount({ inbox: { json: fixture("dhl/in-transit.json") }, enrich: { json: fixture("dhl/in-transit.json") } });
+  const world = await mailWorld(t, account, { transport: dhl });
+  await connectMail(world, account);
+  await world.run("login", "dhl");
+
+  await world.run("refresh");
+
+  const s = await world.shipment(`dhl:${KNOWN_NUMBER}`);
+  assert.deepEqual([s.itemTitle, s.itemSource], [item, "parser"]);
+  assert.equal(s.mailSearchedAt, "2026-09-29T10:00:00.000Z");
+  assert.equal(searchesFor(account, KNOWN_NUMBER), 1);
+  assert.deepEqual(itemSearchLines(world), [
+    "refresh: mail item search 1 number(s), 0 failed, 0 mail(s) returned, 0 naming its number, 1 found in recent mail; items named via schema 0, parser 1, subject 0",
+  ]);
+});
+
+test("a number search that fails or answers with an error isn't marked searched and is tried again next run", async (t) => {
+  const item = "Messingkompass";
+  const account = softeriaAccount({
+    mails: [marketplaceShipped({ trackingNumber: KNOWN_NUMBER, item, at: "2026-09-01T16:00:00Z" })],
+  });
+  let answer = graphError(503, "Service Unavailable");
+  account.list = (args) => (args.search === `"${KNOWN_NUMBER}"` ? answer : null);
+  const dhl = fakeDhlAccount({ inbox: { json: fixture("dhl/in-transit.json") }, enrich: { json: fixture("dhl/in-transit.json") } });
+  const world = await mailWorld(t, account, { transport: dhl });
+  await connectMail(world, account);
+  await world.run("login", "dhl");
+
+  await world.run("refresh");
+  let s = await world.shipment(`dhl:${KNOWN_NUMBER}`);
+  assert.equal(s.mailSearchedAt, undefined);
+  assert.equal(s.itemTitle, undefined);
+  assert.equal((await world.sourcesFile()).connections.mail.health, "ok");
+  assert.deepEqual(itemSearchLines(world), [
+    "refresh: mail item search 0 number(s), 1 failed, 0 mail(s) returned, 0 naming its number, 0 found in recent mail; items named via schema 0, parser 0, subject 0",
+  ]);
+
+  // An answer that isn't a message list is no answer either.
+  answer = toolAnswer({ error: "invalid_search" });
+  world.setClock("2026-09-29T11:00:00.000Z");
+  await world.run("refresh");
+  assert.equal((await world.shipment(`dhl:${KNOWN_NUMBER}`)).mailSearchedAt, undefined);
+
+  answer = null;
+  world.setClock("2026-09-29T12:00:00.000Z");
+  await world.run("refresh");
+  s = await world.shipment(`dhl:${KNOWN_NUMBER}`);
+  assert.deepEqual([s.itemTitle, s.mailSearchedAt], [item, "2026-09-29T12:00:00.000Z"]);
+  assert.equal(searchesFor(account, KNOWN_NUMBER), 3);
 });

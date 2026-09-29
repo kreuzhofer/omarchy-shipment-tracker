@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { fakeChrome, fakeDhl, fixture, holdLock, makeWorld } from "./harness.mjs";
-import { historyPage, trackerPage } from "./fixtures/amazon/pages.mjs";
+import { businessHistoryPage, businessSearchNoResultsPage, historyPage, searchNoResultsPage, trackerPage, unknownSearchPage } from "./fixtures/amazon/pages.mjs";
 
 const ORDER_PAGE = "https://www.amazon.de/your-orders/order-details?orderID=";
 const P_ORDER = "401-1111111-1111111";
@@ -482,4 +482,78 @@ test("a link-only Order that later appears in an account's history is taken over
   assert.deepEqual(rows, [[`amazon:${MANUAL}#0`, "Business", ["amazon:Business", "manual"], "In transit"]]);
   assert.deepEqual(events, []);
   assert.deepEqual(searches(world), []);
+});
+
+// ---- An order search that finds nothing is an answer, not a changed layout (#75)
+
+const health = async (world, label) => (await world.sourcesFile()).connections[`amazon:${label}`].health;
+
+test("an order search page that says it found nothing means 'not owned', in the personal and the Business layout", async (t) => {
+  const routes = accountsRoutes();
+  routes.accounts.Personal.search = { [MANUAL]: searchNoResultsPage(MANUAL) };
+  routes.accounts.Business.history = businessHistoryPage([order(B_ORDER, [0], "Toner")]);
+  routes.accounts.Business.search = { [MANUAL]: businessSearchNoResultsPage(MANUAL) };
+  const world = await world2(t, routes);
+  await connect(world, "Personal", "Business");
+  await world.run("add", MANUAL);
+
+  assert.equal(await world.run("refresh"), 0);
+
+  assert.deepEqual(searches(world), [`Personal:${MANUAL}`, `Business:${MANUAL}`]);
+  assert.deepEqual([await health(world, "Personal"), await health(world, "Business")], ["ok", "ok"]);
+  const s = await world.shipment(`amazon:${MANUAL}`);
+  assert.deepEqual(s.probedBy, ["amazon:Personal", "amazon:Business"]);
+  assert.equal(s.linkOnly, true);
+  // Both histories were still read to the end.
+  assert.ok(await world.shipment(`amazon:${P_ORDER}#0`));
+  assert.ok(await world.shipment(`amazon:${B_ORDER}#0`));
+  assert.ok(!world.logs.some((l) => /stopped|not readable/.test(l)), world.logs.join("\n"));
+});
+
+test("an order search page nobody can read, after a history that was read, leaves Health ok; the Order is searched again next run", async (t) => {
+  const routes = accountsRoutes();
+  routes.accounts.Personal.search = { [MANUAL]: unknownSearchPage() };
+  const world = await world2(t, routes);
+  await connect(world, "Personal");
+  await world.run("add", MANUAL);
+
+  assert.equal(await world.run("refresh"), 0);
+
+  assert.equal(await health(world, "Personal"), "ok");
+  const s = await world.shipment(`amazon:${MANUAL}`);
+  assert.deepEqual(s.probedBy, []);
+  assert.equal(s.linkOnly, false);
+  // The rest of the run went on: the history's tracker page was read.
+  assert.equal((await world.shipment(`amazon:${P_ORDER}#0`)).status, "In transit");
+  assert.ok(world.logs.some((l) => /amazon read 3 page\(s\), 1 Shipment\(s\), 1 order search\(es\) not readable$/.test(l)), world.logs.join("\n"));
+  assert.ok(!world.logs.some((l) => l.includes(MANUAL)));
+
+  // Tried again next run, and again without harm; an answer then counts.
+  world.chrome.navigations.length = 0;
+  world.setClock("2026-09-29T11:00:00.000Z");
+  await world.run("refresh");
+  assert.deepEqual(searches(world), [`Personal:${MANUAL}`]);
+  assert.equal(await health(world, "Personal"), "ok");
+
+  routes.accounts.Personal.search[MANUAL] = searchNoResultsPage(MANUAL);
+  world.setClock("2026-09-29T12:00:00.000Z");
+  await world.run("refresh");
+  assert.deepEqual((await world.shipment(`amazon:${MANUAL}`)).probedBy, ["amazon:Personal"]);
+  assert.equal(await health(world, "Personal"), "ok");
+});
+
+test("a page at the order search's URL that isn't the history and has Orders on it is never taken for 'no results'", async (t) => {
+  const routes = accountsRoutes();
+  // The search header and an Order link, but not in any markup parseHistory knows.
+  routes.accounts.Personal.search = {
+    [MANUAL]: searchNoResultsPage(MANUAL).replace("<h2>Suchergebnisse</h2>", `<a href="/your-orders/order-details?orderID=${MANUAL}">Bestelldetails</a>`),
+  };
+  const world = await world2(t, routes);
+  await connect(world, "Personal");
+  await world.run("add", MANUAL);
+
+  await world.run("refresh");
+
+  assert.deepEqual((await world.shipment(`amazon:${MANUAL}`)).probedBy, []);
+  assert.equal(await health(world, "Personal"), "ok");
 });

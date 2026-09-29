@@ -205,7 +205,8 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     }
   });
   log(`refresh: amazon read ${result.pages} page(s), ${readings.length} Shipment(s)`
-    + `${result.unmapped ? `, ${result.unmapped} unmapped` : ""}${reason ? `, stopped: ${reason}` : ""}`);
+    + `${result.unmapped ? `, ${result.unmapped} unmapped` : ""}`
+    + `${result.unprobed ? `, ${result.unprobed} order search(es) not readable` : ""}${reason ? `, stopped: ${reason}` : ""}`);
   if (result.listed != null) log(boxesLine(result));
 }
 

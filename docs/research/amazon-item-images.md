@@ -155,7 +155,7 @@ upload, and **no `Set-Cookie`**. None of the requests sent cookies. So:
 | Digital Orders (`D01-…`: audiobooks, Prime Video, subscriptions) | They have a box and an image but no tracker link. `parseHistory` already drops them, so there's no Shipment and no image. |
 | Items not yet shipped | Not in the recording. The expected shape is a box with no tracker link, which is skipped today like a digital one. When the item ships, its box gets a link and the image comes with it. To verify once. |
 | Several items in one Shipment | Use the first `item-box`, as #54 allows. |
-| Manual Order IDs found through the order search | The search results use the history markup (`orderSearchUrl` → `parseHistory`), so the same extraction applies. |
+| Manual Order IDs found through the order search | The search results use the history markup (`orderSearchUrl` → `parseHistory`), so the same extraction applies. A search that finds nothing may not be in that markup; it is recognised as such (`isEmptyOrderSearch`, #75). |
 | Mail-only Amazon Shipments (#34), DHL Shipments, manual DHL numbers | No image. They get the fallback. |
 | Amazon Shipment merged with a DHL Shipment on the tracking number (#27) | Keep the Amazon image on the merged Shipment, as `merge.mjs` already does for the title. |
 | An item whose `src` is a placeholder (not under `/images/I/`, e.g. an `.svg`) | Treat it as no image. |
