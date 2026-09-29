@@ -5,8 +5,9 @@
 // One banner per troubled Connection the tab is affected by (Amazon only on
 // Incoming), then one card per Shipment of the tab, in urgency order:
 // title + Carrier/Source badge | 5-step progress bar | Status + Delayed,
-// Estimate · age. Ready for pickup and Problem cards get a coloured border;
-// Terminal and Dismissed cards are dimmed. Amazon cards lead with a square
+// Estimate · age (a finished card: "Delivered Mon 28 Sep", no age). Ready for
+// pickup and Problem cards get a coloured border; finished (Terminal, or
+// delivered per mail) and Dismissed cards are dimmed. Amazon cards lead with a square
 // tile (#58, option A of #54): the item's image, cached by the CLI, or a
 // package glyph until there is one; so do DHL cards whose item a mail named.
 // An Order only mail knows shows "from mail" in its badge and the last mail's
@@ -290,7 +291,8 @@ Column {
       required property string key
       required property string payload
       readonly property var s: JSON.parse(payload)
-      readonly property bool isTerminal: Shipments.terminal[s.status] === true
+      // Finished: Terminal, or delivered as far as mail knows (#76).
+      readonly property bool isTerminal: Shipments.settled(s)
       readonly property bool pickup: s.status === "Ready for pickup"
       readonly property bool problem: s.status === "Problem"
       readonly property var progress: Shipments.progress(s)
@@ -454,7 +456,7 @@ Column {
           }
         }
 
-        // Status (+ Delayed) | Estimate · age
+        // Status (+ Delayed) | Estimate · age, or the delivery day
         Item {
           width: parent.width
           height: Math.max(statusRow.implicitHeight, estimateText.implicitHeight)
@@ -487,8 +489,7 @@ Column {
             width: Math.min(implicitWidth, parent.width - statusRow.width - Style.space(10))
             horizontalAlignment: Text.AlignRight
             elide: Text.ElideLeft
-            text: [Shipments.estimateText(card.s, root.store.nowMs), Shipments.age(card.s.changedAt, root.store.nowMs)]
-              .filter(function(t) { return t !== "" }).join("  ·  ")
+            text: Shipments.dateLine(card.s, root.store.nowMs)
             color: Qt.darker(root.fg, 1.4); font.family: root.ff; font.pixelSize: Style.font.caption
           }
         }

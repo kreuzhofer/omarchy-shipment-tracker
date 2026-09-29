@@ -38,8 +38,9 @@ Item {
   readonly property bool notificationsOn: host ? host.notificationsOn === true : true
   readonly property string omarchyBin: Quickshell.env("OMARCHY_PATH") ? Quickshell.env("OMARCHY_PATH") + "/bin/" : ""
 
-  // The header's 7 / 30 days switch: the list shows Shipments whose last change
-  // falls in the last `days` days (retention keeps at most 30).
+  // The header's 7 / 30 days switch: the list shows Shipments whose last change,
+  // or for finished ones the delivery day, falls in the last `days` days
+  // (retention keeps at most 30).
   property int days: 7
   readonly property string lastRun: sourcesState.lastRun || ""
   // Every Shipment, Dismissed ones included, each with `dismissed` set.
@@ -69,10 +70,8 @@ Item {
   // `shipments` within the 7 / 30 days window, Dismissed ones included. Manual
   // adds waiting for `add` always show.
   readonly property var recentAll: {
-    var cutoff = nowMs - days * 864e5
-    return shipments.filter(function(s) {
-      return String(s.key).indexOf("queued:") === 0 || new Date(s.changedAt).getTime() >= cutoff
-    })
+    var n = days, now = nowMs
+    return shipments.filter(function(s) { return Shipments.inWindow(s, n, now) })
   }
   // What the list shows: Dismissed rows only after "show".
   readonly property var recentShipments: showDismissed ? recentAll : recentAll.filter(function(s) { return !s.dismissed })

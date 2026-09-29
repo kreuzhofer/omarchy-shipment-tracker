@@ -15,6 +15,7 @@
 // Connection's own first sync), is never announced as new.
 
 import { existsSync } from "node:fs";
+import { dayLabel } from "./estimate.mjs";
 
 const INCOMING_STATUSES = ["Out for delivery", "Ready for pickup", "Problem", "Returning", "Delivered", "Returned"];
 
@@ -104,11 +105,22 @@ const image = (s) => (typeof s.image === "string" && s.image.startsWith("/") && 
 const shipmentEvent = (s, kind, title, body) =>
   ({ kind, key: s.key, status: s.status, title, body, url: s.url, ...image(s) });
 
+// The Estimate as the card shows it (Shipments.js dateLine): a Terminal one is
+// "Delivered Tue 29 Sep" from the stored day, whatever words the Source used
+// ("Zugestellt: 29. September"); without a day, nothing.
+const TERMINAL_STATUSES = new Set(["Delivered", "Returned"]);
+function estimateLine(s) {
+  if (!TERMINAL_STATUSES.has(s.status)) return s.estimate?.text;
+  const day = s.estimate?.to ?? s.estimate?.from;
+  return day ? `${s.status} ${dayLabel(day)}` : null;
+}
+
 const EVENTS = {
   status: (s) => shipmentEvent(s, "status", (STATUS_TITLES[s.status] ?? ((i) => `Your ${i}: ${s.status}`))(item(s)),
-    line(sourceLabel(s), s.estimate?.text)),
-  delayed: (s) => shipmentEvent(s, "delayed", `Your ${item(s)} is delayed`, line(sourceLabel(s), s.estimate?.text)),
-  new: (s) => shipmentEvent(s, "new", `New shipment: ${item(s)}`, line(sourceLabel(s), s.status, s.estimate?.text)),
+    line(sourceLabel(s), estimateLine(s))),
+  delayed: (s) => shipmentEvent(s, "delayed", `Your ${item(s)} is delayed`, line(sourceLabel(s), estimateLine(s))),
+  new: (s) => shipmentEvent(s, "new", `New shipment: ${item(s)}`,
+    line(sourceLabel(s), TERMINAL_STATUSES.has(s.status) && estimateLine(s) ? null : s.status, estimateLine(s))),
 };
 
 // Which event, if any, one Shipment gets this run (at most one: a notifying
