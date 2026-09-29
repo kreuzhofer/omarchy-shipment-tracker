@@ -15,7 +15,7 @@ const between = (min, max) => min + Math.random() * (max - min);
 const settle = (sleep) => sleep(Math.round(between(1000, 3000)));
 const gap = (sleep) => sleep(Math.round(between(4000, 12000)));
 
-// Returns { reason, readings, pages, unmapped, owned, notOwned }. `reason` is
+// Returns { reason, readings, pages, unmapped, owned, notOwned, images }. `reason` is
 // null for a full run, else the Health reason ("signed-out", "challenge",
 // "shape", "network") that stopped it; readings taken before the stop are
 // still returned. `known(key)` returns the Shipment already in shipments.json,
@@ -29,8 +29,14 @@ const gap = (sleep) => sleep(Math.round(between(4000, 12000)));
 //
 // `dropped` holds the keys retention dropped; their tracker pages are never
 // read again (see retention.mjs).
+//
+// `images`: [{ key, imageUrl }] for every Shipment the history (or an order
+// search) listed with a product image, Terminal ones included (see images.mjs).
 export async function readAccount(tab, { known, sleep, now, timeZone, historyLoaded = false, lookFor = [], dropped = new Set() }) {
-  const result = { reason: null, readings: [], pages: 0, unmapped: 0, owned: [], notOwned: [] };
+  const result = { reason: null, readings: [], pages: 0, unmapped: 0, owned: [], notOwned: [], images: [] };
+  const noteImages = (listed) => {
+    for (const s of listed) if (s.imageUrl) result.images.push({ key: shipmentKey(s), imageUrl: s.imageUrl });
+  };
   if (!historyLoaded) {
     result.pages++;
     if (!(await tab.navigate(HISTORY_URL))) return { ...result, reason: "network" };
@@ -42,6 +48,7 @@ export async function readAccount(tab, { known, sleep, now, timeZone, historyLoa
   if (!history.ok) return { ...result, reason: "shape" };
 
   const listed = [...history.shipments];
+  noteImages(listed);
   let budget = MAX_TRACKER_PAGES;
   for (const orderId of lookFor) {
     if (history.orderIds.has(orderId)) {
@@ -64,7 +71,10 @@ export async function readAccount(tab, { known, sleep, now, timeZone, historyLoa
     }
     result.owned.push(orderId);
     for (const s of found.shipments) {
-      if (s.orderId === orderId && !listed.some((l) => l.orderId === orderId && l.packageIndex === s.packageIndex)) listed.push(s);
+      if (s.orderId === orderId && !listed.some((l) => l.orderId === orderId && l.packageIndex === s.packageIndex)) {
+        listed.push(s);
+        noteImages([s]);
+      }
     }
   }
 

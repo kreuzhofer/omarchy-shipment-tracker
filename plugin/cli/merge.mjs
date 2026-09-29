@@ -82,7 +82,8 @@ export const hasDhlSide = (s) => Boolean(s.trackingNumber)
 // back into a DHL Shipment keyed on its tracking number. It keeps its
 // Connections (a "manual" mark included), DHL's detail, its notification mark
 // and a dismissal, so nothing is announced again; the Order's title stays until
-// DHL names a sender. Amazon's own Estimate no longer counts towards Delayed.
+// DHL names a sender. Amazon's own Estimate no longer counts towards Delayed,
+// and its item image goes (a DHL card has none).
 export function releaseToDhl(s) {
   if (s.detail !== "DHL") {
     s.delayed = false;
@@ -93,7 +94,7 @@ export function releaseToDhl(s) {
   s.account = null;
   s.carrier = "DHL";
   s.url = trackingPageUrl(s.trackingNumber);
-  for (const field of ["orderId", "detail", "probedBy", "linkOnly", "manualTrackingNumber"]) delete s[field];
+  for (const field of ["orderId", "detail", "probedBy", "linkOnly", "manualTrackingNumber", "imageUrl", "image"]) delete s[field];
   return s;
 }
 

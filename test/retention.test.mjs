@@ -296,6 +296,8 @@ const SHIPMENT_FIELDS = new Set([
   "lastWindowTo", "detail", "notified", "probedBy", "linkOnly",
   // Dismissed (#35): the dismissal and what counts as a new tracking event
   "trackingEvent", "dismissedAt", "dismissedAs",
+  // the item image (#58): its CDN URL and the cached file
+  "imageUrl", "image",
 ]);
 
 test("nothing raw is stored: only mapped fields, no responses or HTML", async (t) => {

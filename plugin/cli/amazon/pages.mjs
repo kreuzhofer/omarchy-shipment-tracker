@@ -4,6 +4,8 @@
 // lists one "Lieferung verfolgen" link per Shipment, and each tracker page
 // carries a language-independent `page-state` JSON. CSS milestone selectors
 // were absent on the live page and are not used.
+import { normalizeImageUrl } from "../images.mjs";
+
 export const ORIGIN = "https://www.amazon.de";
 export const HISTORY_URL = `${ORIGIN}/gp/css/order-history?ref_=nav_orders_first`;
 
@@ -49,8 +51,12 @@ export function classifyPage(url, html) {
 // The order history (or an order search result): one entry per Shipment with
 // a tracker link, newest Order first, and the IDs of all Orders listed, with
 // or without a tracker link. Returns { ok: true, shipments: [{ orderId,
-// packageIndex, href, title }], orderIds: Set } or { ok: false } when the page
-// isn't the order history (a changed data format).
+// packageIndex, href, title, imageUrl }], orderIds: Set } or { ok: false } when
+// the page isn't the order history (a changed data format).
+//
+// A box's items come before its tracker link; the last box's chunk runs on to
+// the end of the page (recommendations, footer), so the image is the first
+// `.product-image img` before the link, or none (see images.mjs).
 export function parseHistory(html) {
   if (!/your-orders-content-container/.test(html)) return { ok: false };
   const orderIds = new Set([...html.matchAll(/\/your-orders\/order-details\?orderID=([\w-]+)/g)].map((m) => m[1]));
@@ -67,7 +73,11 @@ export function parseHistory(html) {
     if (seen.has(key)) continue;
     seen.add(key);
     const title = box.match(/class="yohtmlc-product-title"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/);
-    shipments.push({ orderId, packageIndex, href: href.toString(), title: title ? cleanText(title[1]) : null });
+    const image = box.slice(0, link.index).match(/class="product-image(?:\s[^"]*)?"[^>]*>(?:(?!<\/div>)[\s\S])*?<img\b[^>]*?\ssrc="([^"]*)"/);
+    shipments.push({
+      orderId, packageIndex, href: href.toString(), title: title ? cleanText(title[1]) : null,
+      imageUrl: image ? normalizeImageUrl(decodeEntities(image[1])) : null,
+    });
   }
   return { ok: true, shipments, orderIds };
 }

@@ -35,6 +35,33 @@ export function fakeDhl(routes) {
   };
 }
 
+// A 4×4 grey JPEG generated for the tests (ImageMagick, stripped); no real
+// product image is committed.
+export const TINY_JPEG = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/wAALCAAEAAQBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAA//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AV//Z", "base64");
+
+// Amazon's public image CDN behind the transport, next to `transport` (which
+// still answers the DHL requests). Every image is TINY_JPEG unless
+// `cdn.answer(url)` returns another response: `{ status, contentType, bytes }`
+// or `{ network: true }`. Records each request as { url, headers }.
+export function fakeImageCdn(transport = fakeDhl({})) {
+  const cdn = {
+    requests: [],
+    answer: () => null,
+    fetch: (...args) => transport.fetch(...args),
+    async fetchBytes(url, { headers = {} } = {}) {
+      const u = new URL(url);
+      if (u.host !== "m.media-amazon.com" && u.host !== "images-eu.ssl-images-amazon.com") {
+        throw Object.assign(new Error(`unexpected image request to ${u.host}`), { code: "unexpected" });
+      }
+      cdn.requests.push({ url, headers });
+      const r = cdn.answer(url) ?? { status: 200, contentType: "image/jpeg", bytes: TINY_JPEG };
+      if (r.network) throw Object.assign(new Error("fake network failure"), { code: "network" });
+      return r;
+    },
+  };
+  return cdn;
+}
+
 // The CDP methods the Amazon route may use. Anything else (Runtime.enable,
 // Page.addScriptToEvaluateOnNewDocument, Emulation.*, …) fails the test.
 const CDP_ALLOWED = new Set([

@@ -201,6 +201,8 @@ test("refresh reads the history, then the tracker pages, into Amazon rows", asyn
     url: ORDER_PAGE + DHL_ORDER,
     trackingNumber: DHL_NUMBER,
     trackingEvent: "2@SHIPPED",
+    // The box's product image (#58); this transport has no image CDN.
+    imageUrl: "https://m.media-amazon.com/images/I/example._SS142_.jpg",
     notified: { status: "In transit", delayed: false },
   });
   const amzl = file.shipments.find((s) => s.key === `amazon:${AMZL_ORDER}#1`);

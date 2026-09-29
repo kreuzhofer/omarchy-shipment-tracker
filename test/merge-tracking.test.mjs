@@ -116,6 +116,8 @@ test("DHL first, then Amazon: the same tracking number is one Shipment that both
     detail: "DHL",
     lastWindowTo: "2026-09-29",
     trackingEvent: "3@2026-09-29T07:15:00+02:00",
+    // The Order's item image stays with the merged Shipment (#58).
+    imageUrl: "https://m.media-amazon.com/images/I/example._SS142_.jpg",
     notified: { status: "Out for delivery", delayed: false },
   });
   assert.deepEqual(s.estimate, { from: "2026-09-29", to: "2026-09-29", text: "Tue 29 Sep" });
