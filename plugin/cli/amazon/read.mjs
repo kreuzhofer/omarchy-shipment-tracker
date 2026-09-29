@@ -120,6 +120,8 @@ function trackerReading(target, { state, carrierText }, now, timeZone) {
     // The window end Delayed compares against (see applyReading).
     window: estimate?.to ?? null,
     title: target.title,
+    // Amazon's page lists no events; a newly reached milestone stands for one.
+    trackingEvent: `${state.progressTracker?.numberOfReachedMilestones ?? 0}@${state.progressTracker?.lastReachedMilestone ?? ""}`,
     trackingNumber,
     carrier: inferCarrier(carrierText, trackingNumber),
   };

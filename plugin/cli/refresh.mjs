@@ -17,11 +17,14 @@
 // every Connection, so the >3 collapse sees the whole run (see events.mjs).
 // Connection events (entering needs-login) follow them, from the same id
 // sequence (see health.mjs).
+// Dismissed Shipments that got a real update come back at the same point
+// (see dismiss.mjs).
 import { refreshAmazon } from "./amazon/connection.mjs";
 import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
 import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
+import { clearUpdatedDismissals } from "./dismiss.mjs";
 import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
 import { recordConnectionEvents, recordFailure } from "./health.mjs";
 import { applyDhlReading, carriedByDhl } from "./merge.mjs";
@@ -136,6 +139,9 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
       recordFailure(state.sources.connections[DHL], now(), "network", { countNetwork: true });
     }
     const dropped = applyRetention(state, now());
+    // Notifications ignore dismissals; an update notifies and brings the row
+    // back. A Shipment retention dropped is gone, dismissal and all.
+    clearUpdatedDismissals(state.shipments);
     const told = recordEvents(state.shipments, { firstSync: quiet }) + recordConnectionEvents(state.shipments, state.sources);
     return { told, dropped };
   });

@@ -75,3 +75,7 @@ _Avoid_: ETA, delivery date
 
 **Delayed**:
 A Shipment whose Estimate moved later than the one previously seen. A flag on the Shipment, not a Status.
+
+**Dismissed**:
+A Shipment the user has put out of sight until it gets a real update: a change in Status, Estimate or Delayed, or a new tracking event. The update brings it back. While Dismissed it doesn't count as needing the user, but it still notifies and ages out like any other Shipment.
+_Avoid_: Archived, hidden, muted, snoozed

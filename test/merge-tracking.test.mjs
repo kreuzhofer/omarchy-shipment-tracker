@@ -115,6 +115,7 @@ test("DHL first, then Amazon: the same tracking number is one Shipment that both
     lastSeenAt: s.lastSeenAt, // Amazon's paced read, after 11:00
     detail: "DHL",
     lastWindowTo: "2026-09-29",
+    trackingEvent: "3@2026-09-29T07:15:00+02:00",
     notified: { status: "Out for delivery", delayed: false },
   });
   assert.deepEqual(s.estimate, { from: "2026-09-29", to: "2026-09-29", text: "Tue 29 Sep" });

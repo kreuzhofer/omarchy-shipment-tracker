@@ -47,6 +47,8 @@ export function applyReading(shipment, reading, now) {
   shipment.status = reading.status;
   shipment.estimate = reading.estimate;
   if (reading.title) shipment.title = reading.title;
+  // The latest tracking event, as the Source identifies it (see dismiss.mjs).
+  if (reading.trackingEvent) shipment.trackingEvent = reading.trackingEvent;
   shipment.lastSeenAt = at;
   if (changed) shipment.changedAt = at;
   if (TERMINAL.has(reading.status)) {

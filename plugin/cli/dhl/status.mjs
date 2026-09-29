@@ -118,5 +118,8 @@ export function readDhlElement(element) {
     estimate,
     window,
     title: element.sendungsinfo?.sendungsname || null,
+    // How many events DHL lists and when the latest happened: a new event
+    // within the same Status changes it.
+    trackingEvent: verlauf(element) ? `${verlauf(element).events?.length ?? 0}@${lastEvent(element)?.datum ?? ""}` : null,
   };
 }

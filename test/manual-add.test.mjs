@@ -32,6 +32,7 @@ test("a number DHL doesn't know shows as Unknown, Incoming, 'Not known to DHL ye
     changedAt: "2026-09-29T10:05:00.000Z",
     discoveredAt: "2026-09-29T10:00:00.000Z",
     lastSeenAt: "2026-09-29T10:05:00.000Z",
+    trackingEvent: "0@",
     notified: { status: "Unknown", delayed: false },
   }]);
   assert.deepEqual(file.events, []);

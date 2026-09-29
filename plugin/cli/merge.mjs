@@ -53,7 +53,7 @@ export function absorbDhlTwin(list, amazon) {
   const detailed = dhl.status !== "Unknown" && Boolean(dhl.lastSeenAt);
   if (detailed) {
     takeOver(amazon);
-    for (const field of ["status", "estimate", "delayed", "lastWindowTo", "terminalAt", "changedAt", "direction"]) {
+    for (const field of ["status", "estimate", "delayed", "lastWindowTo", "terminalAt", "changedAt", "direction", "trackingEvent"]) {
       if (dhl[field] === undefined) delete amazon[field];
       else amazon[field] = dhl[field];
     }
@@ -62,6 +62,11 @@ export function absorbDhlTwin(list, amazon) {
   // events.mjs): the parcel isn't new under its Amazon key, and a Status DHL
   // already announced isn't announced again.
   if (dhl.notified && (detailed || !amazon.notified)) amazon.notified = dhl.notified;
+  // A dismissal of either stays until the merged Shipment gets a real update.
+  if (dhl.dismissedAt && !amazon.dismissedAt) {
+    amazon.dismissedAt = dhl.dismissedAt;
+    amazon.dismissedAs = dhl.dismissedAs;
+  }
   return true;
 }
 
