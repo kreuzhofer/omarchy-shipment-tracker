@@ -291,6 +291,8 @@ const SHIPMENT_FIELDS = new Set([
   "trackingNumber", "orderId", "url", "changedAt", "terminalAt", "discoveredAt", "lastSeenAt",
   // bookkeeping of Delayed, merge and notifications
   "lastWindowTo", "detail", "notified", "probedBy", "linkOnly",
+  // Dismissed (#35): the dismissal and what counts as a new tracking event
+  "trackingEvent", "dismissedAt", "dismissedAs",
 ]);
 
 test("nothing raw is stored: only mapped fields, no responses or HTML", async (t) => {

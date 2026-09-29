@@ -351,21 +351,24 @@ Column {
 
   // Under the list: "12 Shipments · scroll for more · 2 dismissed · show".
   Item {
+    id: listNotesBox
     width: parent.width
     height: listNotes.implicitHeight
-    visible: scrollHint.visible || dismissedLink.visible
+    readonly property bool scrolls: list.count > 5
+    readonly property bool anyDismissed: root.store !== null && root.store.dismissedCount > 0
+    visible: scrolls || anyDismissed
     Row {
       id: listNotes
       anchors.horizontalCenter: parent.horizontalCenter
       Text {
         id: scrollHint
-        visible: list.count > 5
-        text: list.count + " Shipments · scroll for more" + (dismissedLink.visible ? " · " : "")
+        visible: listNotesBox.scrolls
+        text: list.count + " Shipments · scroll for more" + (listNotesBox.anyDismissed ? " · " : "")
         color: Qt.darker(root.fg, 1.6); font.family: root.ff; font.pixelSize: Style.font.caption
       }
       Text {
         id: dismissedLink
-        visible: root.store !== null && root.store.dismissedCount > 0
+        visible: listNotesBox.anyDismissed
         text: visible ? root.store.dismissedCount + " dismissed · " + (root.store.showDismissed ? "hide" : "show") : ""
         color: dismissedMouse.containsMouse ? root.fg : Qt.darker(root.fg, 1.6); font.family: root.ff; font.pixelSize: Style.font.caption
         MouseArea {

@@ -146,6 +146,26 @@ test("dismiss and undismiss need a known Shipment key", async (t) => {
   assert.equal(await dismissedAt(world, `dhl:${A}`), null);
 });
 
+test("retention drops a Dismissed Shipment like any other, and its dismissal doesn't bring it back", async (t) => {
+  const { world, dhl } = await connected(t, [parcel(A, "Delivered"), parcel(B, "In transit")]);
+  await dismiss(world, `dhl:${A}`);
+
+  // DHL's archive keeps listing the parcel after it is dropped.
+  world.setClock("2026-10-30T10:00:00.000Z");
+  dhl.show([parcel(A, "Delivered"), parcel(B, "In transit")]);
+  assert.equal(await world.run("refresh"), 0);
+  let file = await world.shipmentsFile();
+  assert.deepEqual(file.shipments.map((s) => s.key), [`dhl:${B}`]);
+  assert.ok(file.dropped.some((d) => d.key === `dhl:${A}`));
+
+  world.setClock("2026-10-30T11:00:00.000Z");
+  assert.equal(await world.run("refresh"), 0);
+  assert.equal(await world.run("undismiss", `dhl:${A}`), 2);
+  file = await world.shipmentsFile();
+  assert.deepEqual(file.shipments.map((s) => s.key), [`dhl:${B}`]);
+  assert.deepEqual(file.events.filter((e) => e.key === `dhl:${A}`), []);
+});
+
 // ---- Amazon: its promise text is reworded as the day comes closer
 
 const ORDER = "302-5555555-5555555";
