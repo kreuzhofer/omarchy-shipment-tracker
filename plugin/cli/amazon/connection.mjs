@@ -156,10 +156,28 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     // manual Order (see retention.mjs).
     const dropped = droppedKeys(shipments);
     const kept = readings.filter((r) => !isDropped(dropped, r.key));
+    const before = new Set(shipments.shipments.map((s) => s.key));
     for (const reading of kept) upsert(shipments.shipments, reading, conn, key, at);
     recordImageUrls(shipments.shipments, result.images ?? []);
     // An Order mail found first is now read here: one Shipment per parcel.
     absorbMailOrders(shipments.shipments);
+    // The Connection's first run that reads Shipments: those first seen now
+    // are the existing backlog, told nothing (no `new`, and no `status` from
+    // a mark taken over from an Order mail). That is the Login's first sync,
+    // any run before one succeeded, and the runs after a Login whose first
+    // sync saw a Business history but listed nothing: its cards render
+    // client-side and may not have been there yet (#68), so the first run
+    // that reads Shipments still counts as the first sync.
+    if (firstSync || !conn.lastOk || conn.quietUntilRead) {
+      const fresh = shipments.shipments.filter((s) => !before.has(s.key) && s.connections.includes(key));
+      for (const s of fresh) delete s.notified;
+      markKnown({ shipments: fresh });
+    }
+    if (kept.length > 0) delete conn.quietUntilRead;
+    else if (firstSync) {
+      if (result.listed === 0 && result.business) conn.quietUntilRead = true;
+      else delete conn.quietUntilRead;
+    }
     applyOwnership(shipments.shipments, key, conn.label, { ...result, readings: kept });
     // A Login that reached the order history has proven the session, even if
     // its first sync then fails for another reason.
@@ -188,6 +206,15 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
   });
   log(`refresh: amazon read ${result.pages} page(s), ${readings.length} Shipment(s)`
     + `${result.unmapped ? `, ${result.unmapped} unmapped` : ""}${reason ? `, stopped: ${reason}` : ""}`);
+  if (result.listed != null) log(boxesLine(result));
+}
+
+// Diagnostic, counts and image hosts only (never an ID or URL), e.g.
+// "refresh: amazon history 6 box(es), 6 listed, 6 with an image URL; image hosts: m.media-amazon.com 12".
+function boxesLine({ boxes: { boxes, withImage, hosts }, listed }) {
+  const byHost = Object.entries(hosts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([host, n]) => `${host.replace(/[^a-z0-9.:-]/gi, "?")} ${n}`).join(", ");
+  return `refresh: amazon history ${boxes} box(es), ${listed} listed, ${withImage} with an image URL; image hosts: ${byHost || "none"}`;
 }
 
 function upsert(list, reading, conn, key, now) {

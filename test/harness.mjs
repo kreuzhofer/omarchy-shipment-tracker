@@ -43,6 +43,11 @@ export const TINY_JPEG = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MCh
 // still answers the DHL requests). Every image is TINY_JPEG unless
 // `cdn.answer(url)` returns another response: `{ status, contentType, bytes }`
 // or `{ network: true }`. Records each request as { url, headers }.
+const IMAGE_CDN_HOSTS = new Set([
+  "m.media-amazon.com", "images-eu.ssl-images-amazon.com", "images-na.ssl-images-amazon.com", "images-fe.ssl-images-amazon.com",
+  "ecx.images-amazon.com", "g-ecx.images-amazon.com", "z-ecx.images-amazon.com",
+]);
+
 export function fakeImageCdn(transport = fakeDhl({})) {
   const cdn = {
     requests: [],
@@ -50,7 +55,7 @@ export function fakeImageCdn(transport = fakeDhl({})) {
     fetch: (...args) => transport.fetch(...args),
     async fetchBytes(url, { headers = {} } = {}) {
       const u = new URL(url);
-      if (u.host !== "m.media-amazon.com" && u.host !== "images-eu.ssl-images-amazon.com") {
+      if (!IMAGE_CDN_HOSTS.has(u.host)) {
         throw Object.assign(new Error(`unexpected image request to ${u.host}`), { code: "unexpected" });
       }
       cdn.requests.push({ url, headers });
