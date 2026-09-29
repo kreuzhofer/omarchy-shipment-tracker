@@ -63,9 +63,14 @@ export function ordersToLookFor(list, key) {
 }
 
 // Applies what one account's run found out (read.mjs `owned`/`notOwned`),
-// after its readings were upserted.
-export function applyOwnership(list, key, label, { owned = [], notOwned = [] }) {
-  for (const orderId of owned) {
+// after its readings were upserted. A package read for an Order that is still
+// an Order-level row is ownership too, even though the account wasn't asked
+// (it said no before, or the Order is link-only): its history lists the Order
+// now, e.g. after history lag, so the Order never shows twice.
+export function applyOwnership(list, key, label, { owned = [], notOwned = [], readings = [] }) {
+  const listed = readings.map((r) => r.orderId)
+    .filter((id) => list.some((s) => s.key === orderKey(id) && isOrderLevel(s) && isManual(s)));
+  for (const orderId of new Set([...owned, ...listed])) {
     const order = list.find((s) => s.key === orderKey(orderId) && isOrderLevel(s));
     const packages = list.filter((s) => s.source === "Amazon" && s.orderId === orderId && s !== order);
     if (!order && !packages.some((s) => s.connections.includes("manual"))) continue;
