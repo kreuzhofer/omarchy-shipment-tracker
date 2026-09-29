@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "bin": {
-    "shipment-tracker": "cli/shipment-tracker.mjs"
+    "shipment-tracker": "plugin/cli/shipment-tracker.mjs"
   },
   "scripts": {
     "test": "node --test test/"

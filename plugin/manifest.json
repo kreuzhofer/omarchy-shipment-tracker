@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "kreuzhofer.shipment-tracker",
+  "name": "Shipment tracker",
+  "version": "0.1.0",
+  "author": "kreuzhofer",
+  "license": "MIT",
+  "description": "Your recent DHL and Amazon Shipments in the bar. Needs Node.js for the shipment-tracker CLI.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Shipments",
+    "description": "Recent Shipments, their Status and Estimate.",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
+  }
+}
