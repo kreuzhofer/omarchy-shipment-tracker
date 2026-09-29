@@ -180,6 +180,37 @@ function imageUrls(tag) {
   return urls;
 }
 
+// An order search page that found nothing (#75). Since #59 every account
+// searches for the Orders only mail knows, so most searches find nothing, and
+// the answer need not be in the history's markup at all. Such a page is: at
+// /your-orders/search, with the search's own header (the personal layout's
+// `#searchOrdersInput` form, the Business layout's `#abYoSearchBar`) or a "no
+// results" line, and no Order, delivery box or unrendered card on it. Anything
+// else parseHistory can't read is not recognised.
+const SEARCH_PATH = /^\/your-orders\/search(?:\/|$)/;
+const SEARCH_MARKERS = [
+  /id="searchOrdersInput"/,
+  /id="abYoSearchBar"/,
+  /action="\/your-orders\/search/,
+  /keine\s+(?:passenden\s+)?(?:Bestellungen|Ergebnisse|Treffer)/i,
+  /\b0\s+Bestellungen\b/i,
+  /\bno\s+(?:matching\s+)?(?:orders|results)\b/i,
+  /returned\s+no\s+results/i,
+];
+export function isEmptyOrderSearch(url, html) {
+  let path;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  if (!SEARCH_PATH.test(path)) return false;
+  if (!SEARCH_MARKERS.some((re) => re.test(html))) return false;
+  if (/\/your-orders\/order-details\?orderID=/.test(html)) return false;
+  if (new RegExp(DELIVERY_BOX.source).test(html) || SKELETON.test(html)) return false;
+  return true;
+}
+
 // Whether a Business-layout history (or order search) page has rendered its
 // order cards: the page ships `orderCard…Skeleton` placeholders first and
 // fills them in client-side. `business` is false for any other page.
