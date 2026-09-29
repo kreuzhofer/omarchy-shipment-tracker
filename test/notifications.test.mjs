@@ -4,9 +4,9 @@
 // numbers and names here are synthetic.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fakeChrome, fakeDhl, fakeDhlAccount, fixture, makeWorld } from "./harness.mjs";
+import { fakeChrome, fakeDhl, fakeDhlAccount, fakeImageCdn, fixture, makeWorld } from "./harness.mjs";
 import { historyPage, signInPage, trackerPage } from "./fixtures/amazon/pages.mjs";
 
 const A = "00340434000000000201";
@@ -77,6 +77,16 @@ async function connected(t, first = []) {
   return { world, dhl };
 }
 
+// Variant B titles (#67), per Status, for `item`.
+const TITLES = {
+  "Out for delivery": (i) => `Your ${i} is out for delivery`,
+  "Ready for pickup": (i) => `Your ${i} is ready for pickup`,
+  Problem: (i) => `Problem with your ${i}`,
+  Returning: (i) => `Your ${i} is on its way back`,
+  Delivered: (i) => `Your ${i} was delivered`,
+  Returned: (i) => `Your ${i} was returned`,
+};
+
 const kinds = (events) => events.map((e) => [e.kind, e.key ?? null, e.status ?? null]);
 
 // ---- Incoming
@@ -92,8 +102,9 @@ for (const status of ["Out for delivery", "Ready for pickup", "Problem", "Return
     assert.equal(e.kind, "status");
     assert.equal(e.key, `dhl:${A}`);
     assert.equal(e.status, status);
-    assert.equal(e.title, status);
-    assert.match(e.body, /^Beispiel Shop GmbH/);
+    assert.equal(e.title, TITLES[status]("parcel from Beispiel Shop GmbH"));
+    assert.match(e.body, /^DHL\b/);
+    assert.equal("image" in e, false);
     assert.equal(e.url, `https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=${A}`);
   });
 }
@@ -118,8 +129,8 @@ test("Incoming: becoming Delayed is a delayed event with the new Estimate", asyn
   const events = await refreshWith(world, dhl, [parcel(A, "In transit", { window: ["2026-10-02", "2026-10-02"] })]);
 
   assert.deepEqual(kinds(events), [["delayed", `dhl:${A}`, "In transit"]]);
-  assert.equal(events[0].title, "Delayed");
-  assert.equal(events[0].body, "Beispiel Shop GmbH · Fri 2 Oct");
+  assert.equal(events[0].title, "Your parcel from Beispiel Shop GmbH is delayed");
+  assert.equal(events[0].body, "DHL · Fri 2 Oct");
   assert.equal(events[0].url, `https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=${A}`);
 
   // Still Delayed next run: nothing new to say.
@@ -140,8 +151,8 @@ test("Incoming: a newly discovered Shipment is a new event naming the sender", a
   const events = await refreshWith(world, dhl, [parcel(A, "In transit"), parcel(B, "Announced", { title: "Muster Versand" })]);
 
   assert.deepEqual(kinds(events), [["new", `dhl:${B}`, "Announced"]]);
-  assert.equal(events[0].title, "New Shipment from Muster Versand");
-  assert.equal(events[0].body, "Announced");
+  assert.equal(events[0].title, "New shipment: parcel from Muster Versand");
+  assert.equal(events[0].body, "DHL · Announced");
   assert.equal(events[0].url, `https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=${B}`);
 });
 
@@ -153,6 +164,33 @@ test("a newly discovered Shipment is only new, even when it arrives Out for deli
   assert.deepEqual(kinds(events), [["new", `dhl:${A}`, "Out for delivery"]]);
 });
 
+// ---- Titles: item, truncation
+
+test("a DHL parcel with its item known from mail is called by the item", async (t) => {
+  const { world, dhl } = await connected(t, [parcel(A, "In transit")]);
+  // What the mail strategy (#59) records on a DHL Shipment.
+  const file = await world.shipmentsFile();
+  file.shipments.find((s) => s.key === `dhl:${A}`).itemTitle = "Winterstiefel Gr. 42";
+  await writeFile(join(world.stateDir, "shipments.json"), JSON.stringify(file));
+
+  const events = await refreshWith(world, dhl, [parcel(A, "Ready for pickup")]);
+
+  assert.deepEqual(kinds(events), [["status", `dhl:${A}`, "Ready for pickup"]]);
+  assert.equal(events[0].title, "Your Winterstiefel Gr. 42 is ready for pickup");
+  assert.match(events[0].body, /^DHL\b/);
+});
+
+test("a long item or sender is cut to about 40 characters, at a word, with an ellipsis", async (t) => {
+  const long = "Beispiel Versandhandel und Logistik Gesellschaft mbH";
+  const { world, dhl } = await connected(t, [parcel(A, "In transit", { title: long })]);
+
+  const events = await refreshWith(world, dhl, [parcel(A, "Delivered", { title: long }), parcel(B, "Announced", { title: "Muster Versand" })]);
+
+  const byKey = Object.fromEntries(events.map((e) => [e.key, e.title]));
+  assert.equal(byKey[`dhl:${A}`], "Your parcel from Beispiel Versandhandel und Logistik… was delivered");
+  assert.equal(byKey[`dhl:${B}`], "New shipment: parcel from Muster Versand");
+});
+
 // ---- Outgoing
 
 for (const status of ["Delivered", "Problem", "Returning"]) {
@@ -162,7 +200,12 @@ for (const status of ["Delivered", "Problem", "Returning"]) {
     const events = await refreshWith(world, dhl, [parcel(A, status, { direction: "Outgoing", title: "Erika Musterfrau" })]);
 
     assert.deepEqual(kinds(events), [["status", `dhl:${A}`, status]]);
-    assert.match(events[0].body, /^To Erika Musterfrau/);
+    assert.equal(events[0].title, {
+      Delivered: "Your parcel to Erika Musterfrau was delivered",
+      Problem: "Problem with your parcel to Erika Musterfrau",
+      Returning: "Your parcel to Erika Musterfrau is on its way back",
+    }[status]);
+    assert.match(events[0].body, /^DHL\b/);
   });
 }
 
@@ -382,8 +425,8 @@ test("Amazon: the Login's first sync announces nothing; a later refresh announce
   const events = await amazonRefresh(world);
 
   assert.deepEqual(kinds(events), [["new", `amazon:${ORDER_2}#0`, "In transit"]]);
-  assert.equal(events[0].title, "New Shipment from Amazon · Personal");
-  assert.equal(events[0].body, "Kabel & Adapter-Set · In transit · Lieferung morgen");
+  assert.equal(events[0].title, "New shipment: Kabel & Adapter-Set");
+  assert.equal(events[0].body, "Amazon · Personal · In transit · Lieferung morgen");
   assert.equal(events[0].url, AMAZON_PAGE + ORDER_2);
 });
 
@@ -398,7 +441,8 @@ test("Amazon: a transition into Delivered is a status event that opens the Order
   const events = await amazonRefresh(world);
 
   assert.deepEqual(kinds(events), [["status", `amazon:${ORDER_1}#0`, "Delivered"]]);
-  assert.equal(events[0].body, "Gartenschlauch 20 m · Zugestellt: 29. September");
+  assert.equal(events[0].title, "Your Gartenschlauch 20 m was delivered");
+  assert.equal(events[0].body, "Amazon · Personal · Zugestellt: 29. September");
   assert.equal(events[0].url, AMAZON_PAGE + ORDER_1);
 });
 
@@ -431,4 +475,34 @@ test("Amazon: a dropped key never produces an event", async (t) => {
   routes.history = historyPage([order(ORDER_1, "Gartenschlauch 20 m")]);
   routes.trackers[`${ORDER_1}#0`] = tracker(ORDER_1, "OUT_FOR_DELIVERY");
   assert.deepEqual(await amazonRefresh(world), []);
+});
+
+test("Amazon: an event carries the cached product image, and none once the file is gone", async (t) => {
+  const routes = {
+    history: historyPage([order(ORDER_1, "USB-C Dock mit sehr langem Produktnamen und Zubehör")]),
+    trackers: { [`${ORDER_1}#0`]: tracker(ORDER_1, "SHIPPED") },
+  };
+  const cdn = fakeImageCdn();
+  const world = await makeWorld({ chrome: fakeChrome(routes), transport: cdn });
+  t.after(() => world.cleanup());
+  assert.equal(await world.run("accounts", "add", "Personal", "--accept-risk"), 0);
+  assert.equal(await world.run("login", "amazon:Personal"), 0);
+  assert.equal(await world.run("refresh"), 0);
+  const { image } = await world.shipment(`amazon:${ORDER_1}#0`);
+  assert.equal(image, join(world.stateDir, "images", "example.jpg"));
+
+  routes.trackers[`${ORDER_1}#0`] = tracker(ORDER_1, "OUT_FOR_DELIVERY", "Heute 14–17 Uhr");
+  const events = await amazonRefresh(world);
+  assert.deepEqual(kinds(events), [["status", `amazon:${ORDER_1}#0`, "Out for delivery"]]);
+  assert.equal(events[0].title, "Your USB-C Dock mit sehr langem Produktnamen… is out for delivery");
+  assert.equal(events[0].body, "Amazon · Personal · Heute 14–17 Uhr");
+  assert.equal(events[0].image, image);
+
+  // The cached file disappears and can't be fetched again: no image, not a stale path.
+  await rm(image);
+  cdn.answer = () => ({ status: 404, contentType: "text/html", bytes: Buffer.from("gone") });
+  routes.trackers[`${ORDER_1}#0`] = tracker(ORDER_1, "DELIVERED", "Zugestellt");
+  const later = await amazonRefresh(world);
+  assert.deepEqual(kinds(later), [["status", `amazon:${ORDER_1}#0`, "Delivered"]]);
+  assert.equal("image" in later[0], false);
 });
