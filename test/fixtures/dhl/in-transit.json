@@ -1,0 +1,59 @@
+{
+  "sendungen": [
+    {
+      "id": "00340434000000000033",
+      "hasCompleteDetails": true,
+      "sendungsinfo": {
+        "gesuchteSendungsnummer": "00340434000000000033",
+        "sendungsrichtung": "ANKOMMEND",
+        "sendungsliste": "AKTUELL"
+      },
+      "sendungsdetails": {
+        "sendungsnummern": {
+          "sendungsnummer": "00340434000000000033"
+        },
+        "sendungsverlauf": {
+          "datumAktuellerStatus": "2026-09-28T18:30:00+02:00",
+          "status": "Die Sendung wurde im Start-Paketzentrum bearbeitet.",
+          "fortschritt": 3,
+          "maximalFortschritt": 5,
+          "farbe": 0,
+          "events": [
+            {
+              "datum": "2026-09-27T08:00:00+02:00",
+              "status": "Die Sendung wurde elektronisch angekündigt.",
+              "ruecksendung": false
+            },
+            {
+              "datum": "2026-09-28T18:30:00+02:00",
+              "status": "Die Sendung wurde im Start-Paketzentrum bearbeitet.",
+              "ruecksendung": false
+            }
+          ]
+        },
+        "zustellung": {
+          "hasDeliveryDateMismatch": false,
+          "abholcodeAvailable": false,
+          "benachrichtigtInFiliale": false,
+          "isDummyPostalnumber": false,
+          "hasPickupLocationMismatch": false,
+          "zustellzeitfensterVon": "2026-09-30",
+          "zustellzeitfensterBis": "2026-09-30"
+        },
+        "zielland": "Deutschland",
+        "istZugestellt": false,
+        "ruecksendung": false,
+        "retoure": false,
+        "kleinpaket": false,
+        "expressSendung": false,
+        "quelle": "PAKET",
+        "international": false,
+        "unplausibel": false
+      },
+      "versandDatumBenoetigt": false,
+      "paeckchen": false
+    }
+  ],
+  "mergedAnonymousShipmentListIds": [],
+  "rateLimited": false
+}

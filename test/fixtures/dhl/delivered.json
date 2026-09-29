@@ -1,0 +1,69 @@
+{
+  "sendungen": [
+    {
+      "id": "00340434000000000055",
+      "hasCompleteDetails": true,
+      "sendungsinfo": {
+        "gesuchteSendungsnummer": "00340434000000000055",
+        "sendungsrichtung": "ANKOMMEND",
+        "sendungsliste": "AKTUELL"
+      },
+      "sendungsdetails": {
+        "sendungsnummern": {
+          "sendungsnummer": "00340434000000000055"
+        },
+        "sendungsverlauf": {
+          "datumAktuellerStatus": "2026-09-29T11:40:00+02:00",
+          "status": "Die Sendung wurde erfolgreich zugestellt.",
+          "fortschritt": 5,
+          "maximalFortschritt": 5,
+          "farbe": 0,
+          "events": [
+            {
+              "datum": "2026-09-27T08:00:00+02:00",
+              "status": "Die Sendung wurde elektronisch angekündigt.",
+              "ruecksendung": false
+            },
+            {
+              "datum": "2026-09-28T18:30:00+02:00",
+              "status": "Die Sendung wurde im Start-Paketzentrum bearbeitet.",
+              "ruecksendung": false
+            },
+            {
+              "datum": "2026-09-29T07:15:00+02:00",
+              "status": "Die Sendung wurde in das Zustellfahrzeug geladen.",
+              "ruecksendung": false
+            },
+            {
+              "datum": "2026-09-29T11:40:00+02:00",
+              "status": "Die Sendung wurde erfolgreich zugestellt.",
+              "ruecksendung": false
+            }
+          ]
+        },
+        "zustellung": {
+          "hasDeliveryDateMismatch": false,
+          "abholcodeAvailable": false,
+          "benachrichtigtInFiliale": false,
+          "isDummyPostalnumber": false,
+          "hasPickupLocationMismatch": false,
+          "zustellzeitfensterVon": null,
+          "zustellzeitfensterBis": null
+        },
+        "zielland": "Deutschland",
+        "istZugestellt": true,
+        "ruecksendung": false,
+        "retoure": false,
+        "kleinpaket": false,
+        "expressSendung": false,
+        "quelle": "PAKET",
+        "international": false,
+        "unplausibel": false
+      },
+      "versandDatumBenoetigt": false,
+      "paeckchen": false
+    }
+  ],
+  "mergedAnonymousShipmentListIds": [],
+  "rateLimited": false
+}

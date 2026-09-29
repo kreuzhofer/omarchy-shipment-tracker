@@ -1,0 +1,17 @@
+{
+  "name": "omarchy-shipment-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Omarchy bar widget that tracks DHL and Amazon Shipments; the shipment-tracker CLI owns the data.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "shipment-tracker": "plugin/cli/shipment-tracker.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  }
+}
