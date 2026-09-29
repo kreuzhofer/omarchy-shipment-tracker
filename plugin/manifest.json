@@ -16,7 +16,16 @@
     "category": "Info",
     "allowMultiple": false,
     "defaultSection": "right",
-    "defaults": {},
-    "schema": []
+    "defaults": {
+      "notifications": true
+    },
+    "schema": [
+      {
+        "key": "notifications",
+        "type": "boolean",
+        "label": "Desktop notifications",
+        "defaultValue": true
+      }
+    ]
   }
 }

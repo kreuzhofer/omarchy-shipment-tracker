@@ -115,6 +115,7 @@ test("DHL first, then Amazon: the same tracking number is one Shipment that both
     lastSeenAt: s.lastSeenAt, // Amazon's paced read, after 11:00
     detail: "DHL",
     lastWindowTo: "2026-09-29",
+    notified: { status: "Out for delivery", delayed: false },
   });
   assert.deepEqual(s.estimate, { from: "2026-09-29", to: "2026-09-29", text: "Tue 29 Sep" });
   // The Sendungsliste knows the number, so there is no anonymous lookup.
@@ -261,3 +262,102 @@ test("a manual add that Amazon later shows becomes the Amazon Shipment, keeping 
   assert.equal(s.status, "Out for delivery");
   assert.equal(s.discoveredAt, "2026-09-29T10:00:00.000Z");
 });
+
+// ---- Notifications (#28) of merged Shipments: one per real change, and a DHL
+// Shipment folded into an Amazon one is not new.
+
+const kinds = (events) => events.map((e) => [e.kind, e.key ?? null, e.status ?? null]);
+
+// The Sendungsliste now lists `elements`.
+function show(dhl, ...elements) {
+  dhl.listed = elements;
+  dhl.inbox = answer(...elements);
+}
+
+async function refreshAt(w, iso) {
+  w.setClock(iso);
+  assert.equal(await w.run("refresh"), 0);
+  return (await w.shipmentsFile()).events;
+}
+
+test("a known DHL Shipment that a new Amazon Order turns out to carry is not announced as new", async (t) => {
+  const dhl = dhlAccount([dhlElement("out-for-delivery", NUMBER)]);
+  const routes = { history: historyWith(AMZL_ORDER), trackers: trackers() };
+  const w = await world(t, { transport: dhl, routes });
+  assert.equal(await w.run("login", "dhl"), 0);
+  await connectAmazon(w);
+
+  routes.history = historyWith(ORDER, AMZL_ORDER);
+  const events = await refreshAt(w, "2026-09-29T11:00:00.000Z");
+
+  assert.equal(merged(await w.shipmentsFile()).length, 1);
+  assert.equal((await w.shipment(`amazon:${ORDER}#0`)).status, "Out for delivery");
+  assert.deepEqual(events, []);
+});
+
+test("a DHL Shipment folded in during the Amazon Login's first sync is not announced either", async (t) => {
+  const dhl = dhlAccount([dhlElement("out-for-delivery", NUMBER)]);
+  const w = await world(t, { transport: dhl, routes: { history: historyWith(ORDER), trackers: trackers() } });
+  assert.equal(await w.run("login", "dhl"), 0);
+  await connectAmazon(w);
+  assert.deepEqual((await w.shipmentsFile()).events, []);
+
+  assert.deepEqual(await refreshAt(w, "2026-09-29T11:00:00.000Z"), []);
+});
+
+test("a merged Shipment notifies once per DHL Status change, under its Amazon key", async (t) => {
+  const dhl = dhlAccount([dhlElement("in-transit", NUMBER)]);
+  const w = await world(t, { transport: dhl, routes: { history: historyWith(ORDER), trackers: trackers() } });
+  assert.equal(await w.run("login", "dhl"), 0);
+  await connectAmazon(w);
+  assert.deepEqual(await refreshAt(w, "2026-09-29T11:00:00.000Z"), []);
+
+  show(dhl, dhlElement("out-for-delivery", NUMBER));
+  const events = await refreshAt(w, "2026-09-29T12:00:00.000Z");
+  assert.deepEqual(kinds(events), [["status", `amazon:${ORDER}#0`, "Out for delivery"]]);
+  assert.equal(events[0].url, ORDER_PAGE + ORDER);
+
+  // Nothing changed: nothing to tell, though Amazon and DHL both read it again.
+  assert.deepEqual(await refreshAt(w, "2026-09-29T13:00:00.000Z"), []);
+});
+
+test("an Amazon Shipment that learns its DHL number doesn't repeat what the DHL Shipment already announced", async (t) => {
+  const dhl = dhlAccount([dhlElement("in-transit", NUMBER)]);
+  const routes = { history: historyWith(ORDER), trackers: withoutNumber(trackers()) };
+  const w = await world(t, { transport: dhl, routes });
+  assert.equal(await w.run("login", "dhl"), 0);
+  await connectAmazon(w);
+  assert.equal(merged(await w.shipmentsFile()).length, 1); // only the DHL one
+  show(dhl, dhlElement("out-for-delivery", NUMBER));
+  assert.deepEqual(kinds(await refreshAt(w, "2026-09-29T11:00:00.000Z")), [["status", `dhl:${NUMBER}`, "Out for delivery"]]);
+
+  // Amazon now shows the number: the two become one, Out for delivery as before.
+  routes.trackers = trackers();
+  const events = await refreshAt(w, "2026-09-29T12:00:00.000Z");
+
+  const file = await w.shipmentsFile();
+  assert.deepEqual(file.shipments.map((s) => s.key), [`amazon:${ORDER}#0`]);
+  assert.equal(file.shipments[0].status, "Out for delivery");
+  assert.deepEqual(events, []);
+
+  show(dhl, dhlElement("delivered", NUMBER));
+  assert.deepEqual(kinds(await refreshAt(w, "2026-09-29T13:00:00.000Z")), [["status", `amazon:${ORDER}#0`, "Delivered"]]);
+});
+
+test("a new Order's event carries what the lookup after Amazon found, and comes once", async (t) => {
+  const dhl = counted(fakeDhl({ [NUMBER]: answer(dhlElement("out-for-delivery", NUMBER)) }));
+  const routes = { history: historyWith(AMZL_ORDER), trackers: trackers() };
+  const w = await world(t, { transport: dhl, routes });
+  await connectAmazon(w);
+
+  routes.history = historyWith(ORDER, AMZL_ORDER);
+  const events = await refreshAt(w, "2026-09-29T11:00:00.000Z");
+
+  assert.deepEqual(kinds(events), [["new", `amazon:${ORDER}#0`, "Out for delivery"]]);
+  assert.deepEqual(await refreshAt(w, "2026-09-29T12:00:00.000Z"), []);
+});
+
+// The tracker pages before the carrier hands Amazon a tracking number.
+function withoutNumber(pages) {
+  return { ...pages, [`${ORDER}#0`]: trackerPage({ orderId: ORDER, packageIndex: "0", shortStatus: "IN_TRANSIT", isMfn: true }) };
+}

@@ -11,11 +11,16 @@
 // under it, re-reading the files first so a concurrent `add` is never lost.
 // A Shipment added while a run is in flight is picked up by the next round of
 // the same run.
+//
+// Notification events: every Shipment that has been read gets its mark at the
+// start (markKnown), and the run's events are recorded once at the end, after
+// every Connection, so the >3 collapse sees the whole run (see events.mjs).
 import { refreshAmazon } from "./amazon/connection.mjs";
 import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
 import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
+import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
 import { applyDhlReading, carriedByDhl } from "./merge.mjs";
 import { TERMINAL } from "./shipments.mjs";
 import { readState, updateState } from "./state.mjs";
@@ -28,7 +33,9 @@ const MAX_ROUNDS = 3;
 const needsLookup = (s) => !TERMINAL.has(s.status)
   && ((s.source === "DHL" && s.connections.includes("manual")) || carriedByDhl(s));
 
-export async function refresh({ stateDir, env, now, transport, chrome, sleep, timeZone, log, source = null }) {
+// `firstSync`: this run is the first sync of the `source` Connection after a
+// Login, so what it discovers is not announced as new.
+export async function refresh({ stateDir, env, now, transport, chrome, sleep, timeZone, log, source = null, firstSync = false }) {
   const attempted = new Set();
   const counts = { lookedUp: 0, unknown: 0, failed: 0, network: 0, synced: 0 };
   // Called by every part of the run that got to write its results.
@@ -38,7 +45,12 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
     sources.offline = counts.network > 0 && counts.network === counts.failed && counts.lookedUp === 0 && counts.synced === 0;
   };
   // The header reads "Refreshing…" while this is set.
-  await updateState(stateDir, ({ sources }) => { sources.refreshing = { startedAt: now().toISOString() }; });
+  const quiet = await updateState(stateDir, ({ shipments, sources }) => {
+    sources.refreshing = { startedAt: now().toISOString() };
+    markKnown(shipments);
+    return firstSyncConnections(sources);
+  });
+  if (firstSync && source) quiet.add(source);
 
   if ((source === null || source === DHL) && await hasTokens(stateDir)) {
     const outcome = await syncDhl({ stateDir, transport, now });
@@ -50,7 +62,6 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
     const listed = await updateState(stateDir, (state) => {
       const at = now();
       const keys = applyDhlSync(state, outcome, at);
-      state.shipments.events = [];
       finishRun(state.sources, at);
       return keys;
     });
@@ -59,7 +70,8 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
     log(outcome.ok ? `refresh: dhl ok, ${outcome.elements.length} listed` : `refresh: dhl failed (${outcome.reason})`);
   }
 
-  // Anonymous lookups; `afterAmazon` leaves the run's events[] as they are.
+  // Anonymous lookups; the pass `afterAmazon` does nothing unless Amazon showed
+  // a DHL number not yet looked up this run.
   const lookUp = async ({ afterAmazon = false } = {}) => {
     for (let round = 0; round < (source === null ? MAX_ROUNDS : 0); round++) {
       const snapshot = await readState(stateDir);
@@ -89,7 +101,6 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
           const reading = needsLookup(s) ? readings.get(s.trackingNumber) : undefined;
           if (reading) applyDhlReading(s, reading, at);
         }
-        if (!afterAmazon) shipments.events = [];
         finishRun(sources, at);
       });
     }
@@ -102,7 +113,11 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
   }
 
   // "Refreshing…" lasts the whole run, Amazon's paced page reads included.
-  await updateState(stateDir, ({ sources }) => { sources.refreshing = null; });
+  const told = await updateState(stateDir, ({ shipments, sources }) => {
+    sources.refreshing = null;
+    return recordEvents(shipments, { firstSync: quiet });
+  });
+  if (told > 0) log(`refresh: ${told} notification event(s)`);
 
   log(`refresh: looked up ${counts.lookedUp} (${counts.unknown} unknown), ${counts.failed} failed${counts.network ? `, ${counts.network} offline` : ""}`);
   return 0;

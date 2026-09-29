@@ -4,6 +4,7 @@
 // Amazon's own session cookie, and Chrome keeps any saved password in the
 // keyring (--password-store=gnome-libsecret), never in our files.
 import { mkdir, rm } from "node:fs/promises";
+import { markKnown, recordEvents } from "../events.mjs";
 import { connectionRecord, recordFailure, recordOk } from "../health.mjs";
 import { nextAmazonPort } from "../ports.mjs";
 import { absorbDhlTwin, applyAmazonReading } from "../merge.mjs";
@@ -115,6 +116,9 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     const conn = sources.connections[key];
     if (!conn) return; // removed while the run was in flight
     const at = now();
+    // A Login's first sync records its own notification events (no `new`
+    // ones); a refresh records them once at the end of its run.
+    if (firstSync) markKnown(shipments);
     for (const reading of readings) upsert(shipments.shipments, reading, conn, key, at);
     // A Login that reached the order history has proven the session, even if
     // its first sync then fails for another reason.
@@ -133,6 +137,7 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
       recordOk(conn, at, shipments.shipments.filter((s) => s.connections.includes(key)).length);
     }
     finishRun(sources, at);
+    if (firstSync) recordEvents(shipments, { firstSync: new Set([key]) });
   });
   log(`refresh: amazon read ${result.pages} page(s), ${readings.length} Shipment(s)`
     + `${result.unmapped ? `, ${result.unmapped} unmapped` : ""}${reason ? `, stopped: ${reason}` : ""}`);

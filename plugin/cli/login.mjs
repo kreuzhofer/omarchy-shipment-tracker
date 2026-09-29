@@ -55,5 +55,5 @@ export async function login(args, stateDir, deps) {
     return 1;
   }
   deps.log("login: dhl logged in, running its first sync");
-  return refresh({ stateDir, now: deps.now, transport: deps.transport, log: deps.log, source: "dhl" });
+  return refresh({ stateDir, now: deps.now, transport: deps.transport, log: deps.log, source: "dhl", firstSync: true });
 }

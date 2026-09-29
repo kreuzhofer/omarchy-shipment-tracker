@@ -41,8 +41,8 @@ export function applyAmazonReading(shipment, reading, now) {
 }
 
 // Folds the DHL Shipment with the same tracking number into this Amazon
-// Shipment, if there is one: the Connections that know it and, when DHL knows
-// the number, DHL's detail. Returns whether it merged.
+// Shipment, if there is one: the Connections that know it, its notification
+// mark and, when DHL knows the number, DHL's detail. Returns whether it merged.
 export function absorbDhlTwin(list, amazon) {
   if (!amazon.trackingNumber) return false;
   const i = list.findIndex((s) => s !== amazon && s.key === `dhl:${amazon.trackingNumber}`);
@@ -50,13 +50,18 @@ export function absorbDhlTwin(list, amazon) {
   const [dhl] = list.splice(i, 1);
   for (const c of dhl.connections) if (!amazon.connections.includes(c)) amazon.connections.push(c);
   if (dhl.discoveredAt < amazon.discoveredAt) amazon.discoveredAt = dhl.discoveredAt;
-  if (dhl.status !== "Unknown" && dhl.lastSeenAt) {
+  const detailed = dhl.status !== "Unknown" && Boolean(dhl.lastSeenAt);
+  if (detailed) {
     takeOver(amazon);
     for (const field of ["status", "estimate", "delayed", "lastWindowTo", "terminalAt", "changedAt", "direction"]) {
       if (dhl[field] === undefined) delete amazon[field];
       else amazon[field] = dhl[field];
     }
   }
+  // What the DHL Shipment's notifications already covered stays covered (see
+  // events.mjs): the parcel isn't new under its Amazon key, and a Status DHL
+  // already announced isn't announced again.
+  if (dhl.notified && (detailed || !amazon.notified)) amazon.notified = dhl.notified;
   return true;
 }
 
