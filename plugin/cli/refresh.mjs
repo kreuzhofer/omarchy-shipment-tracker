@@ -24,7 +24,9 @@ const needsLookup = (s) => s.source === "DHL" && s.connections.includes("manual"
 export async function refresh({ stateDir, now, transport, log, source = null }) {
   const attempted = new Set();
   const counts = { lookedUp: 0, unknown: 0, failed: 0, network: 0, synced: 0 };
+  let finished = false;
   const finishRun = (sources, at) => {
+    finished = true;
     sources.lastRun = at.toISOString();
     sources.refreshing = null;
     // Offline is not an error: only the subtitle changes.
@@ -82,6 +84,9 @@ export async function refresh({ stateDir, now, transport, log, source = null }) 
       finishRun(sources, at);
     });
   }
+
+  // A `--source` run with nothing to sync never reaches finishRun.
+  if (!finished) await updateState(stateDir, ({ sources }) => { sources.refreshing = null; });
 
   log(`refresh: looked up ${counts.lookedUp} (${counts.unknown} unknown), ${counts.failed} failed${counts.network ? `, ${counts.network} offline` : ""}`);
   return 0;

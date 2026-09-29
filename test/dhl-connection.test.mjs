@@ -325,3 +325,35 @@ test("login with an unknown Connection prints usage", async (t) => {
 
   assert.equal(await world.run("login", "nope"), 2);
 });
+
+// #23's Estimate and Delayed apply to Sendungsliste Shipments as they do to manual adds.
+test("a Sendungsliste Shipment whose delivery window moves later turns Delayed", async (t) => {
+  const withWindow = (from, to) => {
+    const json = fixture("dhl/account/enriched.json");
+    Object.assign(json.sendungen.find((e) => e.id === INCOMING).sendungsdetails.zustellung,
+      { zustellzeitfensterVon: from, zustellzeitfensterBis: to });
+    return { json };
+  };
+  let enriched = withWindow("2026-09-30", "2026-09-30");
+  const world = await connectedWorld(t, account({ enrich: () => enriched }));
+  const first = await world.shipment(`dhl:${INCOMING}`);
+  assert.equal(first.delayed, false);
+  assert.equal(first.estimate.text, "Wed 30 Sep");
+
+  enriched = withWindow("2026-10-01", "2026-10-02");
+  world.setClock("2026-09-29T11:00:00.000Z");
+  assert.equal(await world.run("refresh", "--source", "dhl"), 0);
+
+  const s = await world.shipment(`dhl:${INCOMING}`);
+  assert.equal(s.delayed, true);
+  assert.equal(s.estimate.text, "Thu 1 Oct – Fri 2 Oct");
+});
+
+test("a --source dhl run without a login doesn't leave the header reading Refreshing…", async (t) => {
+  const world = await makeWorld({ transport: account({ inbox: null, enrich: null }) });
+  t.after(() => world.cleanup());
+
+  assert.equal(await world.run("refresh", "--source", "dhl"), 0);
+
+  assert.equal((await world.sourcesFile()).refreshing, null);
+});
