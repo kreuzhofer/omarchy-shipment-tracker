@@ -1,9 +1,14 @@
-// A Connection's Health in sources.json (spec #21, "Health"). This covers the
-// transitions a sync needs today: success → ok, an auth failure → needs-login
-// with its reason, any other failure counted with its reason. The rest of the
-// state machine (source-down after 2 failures or 1 shape failure, offline
-// handling, the DHL empty-list checks) belongs to #29.
-const AUTH_REASONS = new Set(["expired", "account-link-lost", "empty-list", "challenge", "signed-out"]);
+// A Connection's Health in sources.json (spec #21, "Health"; state machine
+// from #19). Each Connection has exactly one Health; a Login in progress is a
+// separate field and not touched here.
+//
+// Success → ok. An auth failure → needs-login with its reason. Any other
+// failure is counted with its reason, and makes the Connection source-down at
+// once for a changed data format ("shape"), else on the second in a row.
+// A network failure only records the run: offline is not an error. The
+// offline handling that remains (DHL's empty-list checks, when offline
+// counts) belongs to #29.
+export const AUTH_REASONS = new Set(["expired", "account-link-lost", "empty-list", "challenge", "signed-out"]);
 
 export function connectionRecord(sources, key) {
   sources.connections[key] ??= {
@@ -37,17 +42,23 @@ export function recordOk(connection, now, count) {
   connection.lastCount = count;
 }
 
-// A network failure changes nothing here: offline is not an error (#29 decides
-// when it counts).
-export function recordFailure(connection, now, reason) {
+// `message` is the banner text for the reason, if the Connection has one.
+// `countNetwork`: the caller has seen something else in this run get
+// through, so a network failure is this Connection's own and counts.
+export function recordFailure(connection, now, reason, { message = null, countNetwork = false } = {}) {
   const at = now.toISOString();
   connection.lastRun = at;
-  if (reason === "network") return;
+  if (reason === "network" && !countNetwork) return;
   if (AUTH_REASONS.has(reason)) {
     enter(connection, "needs-login", at);
     connection.reason = reason;
+    connection.message = message;
     return;
   }
   connection.failures += 1;
+  if (reason === "shape" || connection.failures >= 2 || connection.health === "source-down") {
+    enter(connection, "source-down", at);
+    connection.message = message;
+  }
   connection.reason = reason;
 }

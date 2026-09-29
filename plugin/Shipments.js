@@ -78,10 +78,11 @@ function age(iso, nowMs) {
   return Math.round(h / 24) + " d ago"
 }
 
-// "DHL", "Amazon · Personal", "Amazon · Personal via DHL"
+// "DHL", "Amazon · Personal", "Amazon · Personal via DHL". Amazon Logistics
+// is Amazon's own Carrier, so it gets no "via".
 function sourceLabel(s) {
   var label = s.source + (s.account ? " · " + s.account : "")
-  if (s.carrier && s.carrier !== s.source) label += " via " + s.carrier
+  if (s.carrier && s.carrier !== s.source && s.carrier.indexOf(s.source + " ") !== 0) label += " via " + s.carrier
   return label
 }
 
