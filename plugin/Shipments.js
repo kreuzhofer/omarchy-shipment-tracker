@@ -23,11 +23,28 @@ var attention = { "Ready for pickup": true, "Problem": true }
 var rank = { "Problem": 0, "Ready for pickup": 1, "Out for delivery": 2, "In transit": 3, "Returning": 3,
   "Announced": 4, "Unknown": 5, "Delivered": 6, "Returned": 6 }
 
-// Urgency first, newest change first within a group.
+// The day a Terminal Shipment was delivered or returned, as the Carrier or
+// Amazon reported it: its Estimate is that day (see dhl/status.mjs,
+// amazon/status.mjs), or, for an Order only mail knows, the delivery mail's
+// date. Without one, when it was first seen Terminal.
+function terminalDay(s) {
+  var e = s.estimate
+  var mailed = s.mail && s.mail.step === "Delivered" ? s.mail.at : null
+  return String((e && (e.to || e.from)) || mailed || s.terminalAt || s.changedAt || "").slice(0, 10)
+}
+
+// Urgency first. Within a group newest change first; Terminal ones by the day
+// they were delivered, newest first, since merges and migrations bump changedAt.
 function byUrgency(a, b) {
   var ra = rank[a.status] !== undefined ? rank[a.status] : 5
   var rb = rank[b.status] !== undefined ? rank[b.status] : 5
-  return (ra - rb) || String(b.changedAt || "").localeCompare(String(a.changedAt || ""))
+  if (ra !== rb) return ra - rb
+  if (terminal[a.status] && terminal[b.status]) {
+    var byDay = terminalDay(b).localeCompare(terminalDay(a))
+    if (byDay) return byDay
+    return String(b.terminalAt || b.changedAt || "").localeCompare(String(a.terminalAt || a.changedAt || ""))
+  }
+  return String(b.changedAt || "").localeCompare(String(a.changedAt || ""))
 }
 
 function localDay(ms) {
