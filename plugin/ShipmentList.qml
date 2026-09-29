@@ -22,6 +22,8 @@ Column {
   readonly property int rowHeight: Style.space(46)
   signal openRequested(string url)
   signal closeRequested()
+  // The gear and Connect Sources open the Sources page (#31).
+  signal sourcesRequested()
   spacing: Style.space(8)
 
   function scrollToEnd() { list.positionViewAtEnd() }
@@ -41,6 +43,7 @@ Column {
         width: parent.width
         elide: Text.ElideRight
         text: !root.store ? "" : root.store.summary + (root.store.refreshing ? "Refreshing…"
+          : !root.store.anySetUp ? "No Sources connected · manual add only"
           : root.store.lastRun === "" ? "Not refreshed yet"
           : root.store.sourcesState.offline ? "Offline · updated " + Shipments.age(root.store.lastOnline, root.store.nowMs)
           : "Updated " + Shipments.age(root.store.lastRun, root.store.nowMs))
@@ -54,6 +57,14 @@ Column {
       spacing: Style.space(4)
       Button { text: "7 days"; selected: root.store && root.store.days === 7; fontSize: Style.font.bodySmall; onClicked: root.store.setDays(7) }
       Button { text: "30 days"; selected: root.store && root.store.days === 30; fontSize: Style.font.bodySmall; onClicked: root.store.setDays(30) }
+      PanelActionButton {
+        id: gearButton
+        anchors.verticalCenter: parent.verticalCenter
+        iconText: "\u{F0493}"
+        tooltipText: "Sources"
+        foreground: root.fg
+        onClicked: root.sourcesRequested()
+      }
       PanelActionButton {
         id: refreshButton
         anchors.verticalCenter: parent.verticalCenter
@@ -337,7 +348,7 @@ Column {
     Text { anchors.horizontalCenter: parent.horizontalCenter; text: "\u{F03D7}"; color: Qt.darker(root.fg, 1.8); font.family: root.ff; font.pixelSize: Style.font.display }
     Text {
       anchors.horizontalCenter: parent.horizontalCenter
-      text: !root.store || root.store.nothingTracked ? "No Shipments yet" : "No Shipments in the last " + root.store.days + " days"
+      text: !root.store || root.store.nothingTracked ? "Nothing tracked yet" : "No Shipments in the last " + root.store.days + " days"
       color: Qt.darker(root.fg, 1.3); font.family: root.ff; font.pixelSize: Style.font.body
     }
     Button {
@@ -352,8 +363,15 @@ Column {
       anchors.horizontalCenter: parent.horizontalCenter
       horizontalAlignment: Text.AlignHCenter
       wrapMode: Text.WordWrap
-      text: "Paste a DHL tracking number or an Amazon order ID below to track it."
+      text: "Paste a tracking number or Amazon order ID below, or connect DHL and Amazon to find your Shipments automatically."
       color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.bodySmall
+    }
+    // First run (#18 §1): no Source set up yet.
+    Button {
+      anchors.horizontalCenter: parent.horizontalCenter
+      visible: !!root.store && !root.store.anySetUp
+      text: "Connect Sources"; selected: true; fontSize: Style.font.bodySmall
+      onClicked: root.sourcesRequested()
     }
   }
 
@@ -391,6 +409,13 @@ Column {
   }
 
   PanelSeparator { foreground: root.fg }
+
+  // Without Node.js the CLI can't add anything (spec #21, "Architecture").
+  NodeNotice {
+    width: parent.width
+    store: root.store; fg: root.fg; ff: root.ff
+    text: "Adding tracking numbers needs Node.js, which isn't installed."
+  }
 
   // ---- Footer: manual add + notifications toggle
   Row {

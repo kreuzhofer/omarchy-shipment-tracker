@@ -241,3 +241,97 @@ function systemdEscape(text) {
   }
   return out
 }
+
+// ---- The Sources page (#18 variant B, spec #21 "Panel (Sources page)")
+
+// The accordion row's state summary for one Connection (c may be missing:
+// never set up). A Login in progress shows as "Connecting…".
+function rowSummary(c, loggingIn) {
+  if (loggingIn) return "Connecting…"
+  if (!c || !c.health || c.health === "not-set-up") return "Not connected"
+  if (c.health === "ok") return "Connected"
+  if (c.health === "needs-login") return "Needs a login"
+  return "Can't be read"
+}
+
+// The Amazon row's summary: the account labels, then "1 needs you" or
+// "Connecting…"; "Not connected" until one is set up. accounts: [{ key, connection }].
+function amazonSummary(accounts, activeKey) {
+  var labels = accounts.map(function(a) { return accountLabel(a.key, a.connection) }).join(", ")
+  if (accounts.some(function(a) { return a.key === activeKey })) return labels + " · Connecting…"
+  // Accounts added but never signed in aren't set up yet.
+  if (!accounts.some(function(a) { return isSetUp(a.connection) })) return "Not connected"
+  var bad = accounts.filter(function(a) { return isTroubled(a.connection) }).length
+  return labels + (bad ? " · " + bad + " need" + (bad === 1 ? "s" : "") + " you" : "")
+}
+
+function accountLabel(key, c) {
+  return (c && c.label) || String(key).replace(/^amazon:/, "")
+}
+
+// Whether a Connection has got past "not set up".
+function isSetUp(c) {
+  return !!c && !!c.health && c.health !== "not-set-up"
+}
+
+// The line a Sources row shows while its Login runs (c may still be null
+// right after Log in was clicked).
+function rowLoginText(key, c, nowMs) {
+  var login = c && c.login
+  if (!login) return "Opening a Chrome window…"
+  if (login.phase === "waiting") return "Waiting for the refresh to finish…"
+  if (login.phase === "syncing") return "Logged in · first sync running…"
+  var left = Math.max(1, Math.ceil((new Date(login.expiresAt).getTime() - nowMs) / 6e4))
+  var text = key === "dhl" ? "Chrome is open on the DHL login. Log in there (2FA too); the window closes by itself."
+    : "Chrome is open on amazon.de. Sign in as " + accountLabel(key, c) + " and tick “Angemeldet bleiben”; the window hides itself."
+  return text + " · " + left + " min left"
+}
+
+// The Health line of a Sources row (empty for a Connection not set up and
+// without a Login result). After a Login that didn't succeed it says so.
+function rowHealthText(key, c, nowMs) {
+  if (isTroubled(c)) return bannerText(key, c, nowMs)
+  var result = loginResultText(c && c.lastLogin)
+  if (!isSetUp(c)) return result
+  // An ok Amazon account says nothing: its check glyph does.
+  if (result !== "") return result + " · still connected"
+  return key === "dhl" ? "Connected · Incoming and Outgoing" : ""
+}
+
+// Falls back to ASCII letters where the JS engine lacks Unicode property escapes.
+function labelPattern() {
+  try {
+    return new RegExp("^[\\p{L}\\p{N}][\\p{L}\\p{N} _-]{0,23}$", "u")
+  } catch (e) {
+    return /^[A-Za-z0-9\u00C0-\u024F][A-Za-z0-9\u00C0-\u024F _-]{0,23}$/
+  }
+}
+
+// Mirrors the CLI's label rule (amazon/connection.mjs): 1–24 letters,
+// digits, spaces, - or _, starting with a letter or digit.
+function labelProblem(label, accounts) {
+  var text = String(label || "").trim()
+  if (text === "") return "required"
+  if (!labelPattern().test(text)) return "A label is 1–24 letters, digits, spaces, - or _"
+  var lower = text.toLowerCase()
+  if (accounts.some(function(a) { return accountLabel(a.key, a.connection).toLowerCase() === lower }))
+    return "An account with this label exists"
+  return ""
+}
+
+// The state glyph of a Connection on the Sources page (login: its Login
+// record while one runs, else null).
+function connectionGlyph(c, loggingIn) {
+  if (loggingIn) return c && c.login && c.login.phase === "syncing" ? "\u{F04E6}" : "\u{F059F}" // sync / web
+  if (!isSetUp(c)) return "\u{F0766}"                      // circle-outline
+  if (c.health === "ok") return "\u{F05E0}"                // check-circle
+  if (c.health === "needs-login") return "\u{F033E}"       // lock
+  return "\u{F0164}"                                       // cloud-off-outline
+}
+
+// "good", "bad" (the user must look) or "" (muted), for the glyph's colour.
+function connectionTone(c, loggingIn) {
+  if (loggingIn) return "busy"
+  if (isTroubled(c)) return "bad"
+  return isSetUp(c) ? "good" : ""
+}
