@@ -25,6 +25,13 @@ Item {
   // Removed keys stay hidden until shipments.json no longer lists them as manual
   // adds, so the row doesn't flash back before the file is re-read.
   property var removedKeys: []
+  // Dismissed (#35): the CLI stores it in shipments.json (`dismissedAt`). A
+  // click shows at once through `dismissOverrides` ({ key: true | false })
+  // until the file says the same; `dismissQueue` holds the CLI calls to make.
+  property var dismissOverrides: ({})
+  property var dismissQueue: []
+  // The footer's "N dismissed · show" reveals Dismissed rows (dimmed).
+  property bool showDismissed: false
   property double nowMs: Date.now()
   // The bar widget, which owns the notifications setting.
   property var host: null
@@ -35,6 +42,7 @@ Item {
   // falls in the last `days` days (retention keeps at most 30).
   property int days: 7
   readonly property string lastRun: sourcesState.lastRun || ""
+  // Every Shipment, Dismissed ones included, each with `dismissed` set.
   readonly property var shipments: {
     var known = {}
     var gone = {}
@@ -48,16 +56,28 @@ Item {
     var queued = queuedAdds.filter(function(p) { return !known[Shipments.manualKey(p.id)] }).map(function(p) {
       return Shipments.queuedRow(p.id, p.at)
     })
+    var overrides = dismissOverrides
+    rows = rows.map(function(s) {
+      var o = overrides[s.key]
+      return Object.assign({}, s, { dismissed: o !== undefined ? o : !!s.dismissedAt })
+    })
     return queued.concat(rows).sort(Shipments.byUrgency)
   }
-  // What the list shows: `shipments` within the 7 / 30 days window. Manual adds
-  // waiting for `add` always show.
-  readonly property var recentShipments: {
+  // The Shipments that aren't Dismissed: what counts towards "need you", the
+  // bar icon and its tooltip.
+  readonly property var activeShipments: shipments.filter(function(s) { return !s.dismissed })
+  // `shipments` within the 7 / 30 days window, Dismissed ones included. Manual
+  // adds waiting for `add` always show.
+  readonly property var recentAll: {
     var cutoff = nowMs - days * 864e5
     return shipments.filter(function(s) {
       return String(s.key).indexOf("queued:") === 0 || new Date(s.changedAt).getTime() >= cutoff
     })
   }
+  // What the list shows: Dismissed rows only after "show".
+  readonly property var recentShipments: showDismissed ? recentAll : recentAll.filter(function(s) { return !s.dismissed })
+  readonly property int dismissedCount: recentAll.filter(function(s) { return s.dismissed }).length
+  onDismissedCountChanged: if (dismissedCount === 0) showDismissed = false
   // Nothing tracked and no Connection set up: the first-run empty state.
   readonly property bool nothingTracked: (shipmentsState.shipments || []).length === 0 && queuedAdds.length === 0
     && Object.keys(sourcesState.connections || {}).every(function(k) {
@@ -83,14 +103,14 @@ Item {
     return Object.keys(c).some(function(k) { return c[k] && c[k].health && c[k].health !== "not-set-up" })
   }
   // The bar icon: active when something needs the user; tooltip "N need you · M arriving today".
-  readonly property bool needsYou: Shipments.needsYou(shipments, troubledCount)
-  readonly property string tooltip: Shipments.tooltip(shipments, troubledCount, nowMs, anySetUp)
+  readonly property bool needsYou: Shipments.needsYou(activeShipments, troubledCount)
+  readonly property string tooltip: Shipments.tooltip(activeShipments, troubledCount, nowMs, anySetUp)
   // Offline: "updated … ago" is the last run that got through.
   readonly property string lastOnline: sourcesState.lastOnline || lastRun
   // A run that died without clearing `refreshing` stops counting after 15 min.
   readonly property bool refreshing: !!sourcesState.refreshing && !!sourcesState.refreshing.startedAt
     && nowMs - new Date(sourcesState.refreshing.startedAt).getTime() < 15 * 6e4
-  readonly property string summary: Shipments.summary(shipments, troubledCount, nowMs)
+  readonly property string summary: Shipments.summary(activeShipments, troubledCount, nowMs)
 
   function parse(text, fallback) {
     try {
@@ -114,6 +134,7 @@ Item {
       var rows = root.shipmentsState.shipments || []
       rows.forEach(function(s) { listed[s.key] = (s.connections || []).indexOf("manual") >= 0 })
       if (root.removedKeys.length) root.removedKeys = root.removedKeys.filter(function(k) { return listed[k] })
+      root.settleDismissOverrides()
     }
     onLoadFailed: {
       root.shipmentsState = ({ shipments: [], events: [] })
@@ -232,6 +253,57 @@ Item {
       root.reloadFiles()
       root.pendingRemovals = root.pendingRemovals.filter(function(k) { return k !== done })
       Qt.callLater(root.startNextRemove)
+    }
+  }
+
+  // Dismiss (true) or bring back (false) a Shipment; see Dismissed in CONTEXT.md.
+  function setDismissed(key, value) {
+    if (!key || String(key).indexOf("queued:") === 0) return
+    var o = Object.assign({}, root.dismissOverrides)
+    o[key] = value === true
+    root.dismissOverrides = o
+    root.dismissQueue = root.dismissQueue.concat([{ key: key, dismiss: value === true }])
+    root.startNextDismiss()
+  }
+  function dismiss(key) { root.setDismissed(key, true) }
+  function undismiss(key) { root.setDismissed(key, false) }
+
+  // Drops the overrides shipments.json now agrees with (or no longer lists),
+  // unless a CLI call for that key is still to come.
+  function settleDismissOverrides() {
+    var keys = Object.keys(root.dismissOverrides)
+    if (keys.length === 0) return
+    var inFile = {}
+    ;(root.shipmentsState.shipments || []).forEach(function(s) { inFile[s.key] = !!s.dismissedAt })
+    var waiting = {}
+    root.dismissQueue.forEach(function(d) { waiting[d.key] = true })
+    var o = {}
+    keys.forEach(function(k) {
+      if (waiting[k] || (inFile[k] !== undefined && inFile[k] !== root.dismissOverrides[k])) o[k] = root.dismissOverrides[k]
+    })
+    root.dismissOverrides = o
+  }
+
+  function startNextDismiss() {
+    if (dismissProcess.running || root.dismissQueue.length === 0) return
+    var next = root.dismissQueue[0]
+    dismissProcess.command = ["node", root.cliPath, next.dismiss ? "dismiss" : "undismiss", next.key]
+    dismissProcess.running = true
+  }
+
+  Process {
+    id: dismissProcess
+    onExited: function(exitCode, exitStatus) {
+      var done = root.dismissQueue[0]
+      root.dismissQueue = root.dismissQueue.slice(1)
+      // A failed call (e.g. the Shipment is gone) shows the file's state again.
+      if (exitCode !== 0 && done && root.dismissOverrides[done.key] === done.dismiss) {
+        var o = Object.assign({}, root.dismissOverrides)
+        delete o[done.key]
+        root.dismissOverrides = o
+      }
+      root.reloadFiles()
+      Qt.callLater(root.startNextDismiss)
     }
   }
 

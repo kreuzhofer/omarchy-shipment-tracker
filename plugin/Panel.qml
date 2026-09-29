@@ -9,6 +9,8 @@
 //   omarchy-shell kreuzhofer.shipment-tracker days 7|30  the header's 7 / 30 days switch
 //   omarchy-shell kreuzhofer.shipment-tracker scroll     scroll the list to its end
 //   omarchy-shell kreuzhofer.shipment-tracker retry <key> same as a banner's Retry
+//   omarchy-shell kreuzhofer.shipment-tracker dismiss <k> / undismiss <k>   a row's dismiss button
+//   omarchy-shell kreuzhofer.shipment-tracker showDismissed <true|false>  the footer's "show"
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -51,6 +53,9 @@ Panel {
     function days(n: int): void { backend.setDays(n) }
     function scroll(): void { list.scrollToEnd() }
     function retry(key: string): void { backend.retry(key) }
+    function dismiss(key: string): void { backend.dismiss(key) }
+    function undismiss(key: string): void { backend.undismiss(key) }
+    function showDismissed(show: bool): void { backend.showDismissed = show }
   }
 
   KeyboardPanel {
