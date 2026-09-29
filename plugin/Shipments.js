@@ -155,10 +155,13 @@ function clockText(iso, nowMs) {
   return localDay(d.getTime()) === localDay(nowMs) ? time : weekdays[d.getDay()] + " " + time
 }
 
-// The banner line for a troubled Connection.
+// The banner line for a troubled Connection. After a Login that didn't
+// succeed, it says so first, until the next Login.
 function bannerText(key, c, nowMs) {
   var name = connectionName(key, c)
   if (c.health === "needs-login") {
+    var result = loginResultText(c.lastLogin)
+    if (result !== "") return result + " · " + name + " still needs a login"
     if (c.reason === "challenge") return name + " asks for a security check"
     if (c.reason === "empty-list") return "DHL returned no Shipments, which usually means the login was lost"
     return name + " needs a login · list may be incomplete"
@@ -171,6 +174,40 @@ function bannerText(key, c, nowMs) {
 function bannerAction(c) {
   if (c.health === "source-down") return "Retry"
   return c.reason === "challenge" ? "Open" : "Log in"
+}
+
+// ---- Logins (spec #21, "Login window lifecycle"; the CLI owns the fields)
+
+var STALE_LOGIN_MS = 5 * 6e4
+
+// A Login still in progress: the CLI clears a stale one, but a Login 5 min
+// past its deadline never counts, even before that happens.
+function loginActive(c, nowMs) {
+  return !!c && !!c.login && !!c.login.expiresAt && nowMs - new Date(c.login.expiresAt).getTime() <= STALE_LOGIN_MS
+}
+
+function loginResultText(lastLogin) {
+  if (!lastLogin) return ""
+  if (lastLogin.result === "cancelled") return "Login cancelled"
+  if (lastLogin.result === "timed-out") return "Login timed out after 15 min"
+  return "Login failed"
+}
+
+// The progress banner's line for the Login of `key` (c may still be null
+// right after Log in was clicked).
+function loginText(key, c, nowMs) {
+  var name = connectionName(key, c)
+  var login = c && c.login
+  if (!login) return "Opening a Chrome window for " + name + "…"
+  if (login.phase === "waiting") return "Waiting for the refresh to finish…"
+  if (login.phase === "syncing") return name + " logged in · syncing…"
+  var left = Math.max(1, Math.ceil((new Date(login.expiresAt).getTime() - nowMs) / 6e4))
+  return "Chrome is open · log in to " + name + " there · " + left + " min left"
+}
+
+// The transient unit a Login runs in (Cancel stops it).
+function loginUnit(key) {
+  return "shipment-tracker-login-" + systemdEscape(key) + ".service"
 }
 
 // The bar tooltip: "2 need you · 1 arriving today", "Shipments", or

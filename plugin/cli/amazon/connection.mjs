@@ -13,6 +13,7 @@ import { clearUpdatedDismissals } from "../dismiss.mjs";
 import { markKnown, recordEvents } from "../events.mjs";
 import { connectionRecord, recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { withLock } from "../lock.mjs";
+import { runLogin } from "../logins.mjs";
 import { nextAmazonPort } from "../ports.mjs";
 import { absorbDhlTwin, applyAmazonReading } from "../merge.mjs";
 import { droppedKeys, isDropped } from "../retention.mjs";
@@ -27,7 +28,6 @@ export const connectionKey = (label) => `amazon:${label}`;
 const LABEL = /^[\p{L}\p{N}][\p{L}\p{N} _-]{0,23}$/u;
 const QUIET_FROM = 23;
 const QUIET_TO = 7;
-const LOGIN_DEADLINE_MS = 15 * 60_000;
 const PROFILE_WAIT_SECONDS = 90;
 
 // Runs fn while holding the profile's flock; waitSeconds 0 doesn't wait.
@@ -217,22 +217,43 @@ function upsert(list, reading, conn, key, now) {
 // `login amazon:<label>`: opens the account's profile visibly on amazon.de;
 // once the order history loads, the window moves to the hidden workspace and
 // the first sync runs in the same Chrome. Returns "ok", "cancelled",
-// "timed-out", "browser", "busy" (a refresh held the profile for over 90 s)
-// or "unknown-account".
+// "timed-out", "browser", "busy" (a refresh held the profile for over 90 s),
+// "unknown-account", "another-login" (see logins.mjs), or the reason the
+// first sync stopped after signing in (still a successful Login).
 export async function loginAmazon(label, deps) {
+  const key = connectionKey(label);
   const { sources } = await readState(deps.stateDir);
-  if (!sources.connections[connectionKey(label)]) return "unknown-account";
-  return withProfile(profileDirFor(deps.env, label), PROFILE_WAIT_SECONDS, () => signIn(label, deps))
-    .catch((e) => { if (e.code === "locked") return "busy"; throw e; });
+  if (!sources.connections[key]) return "unknown-account";
+  let result = "another-login";
+  await runLogin(key, deps, async (handle) => {
+    const profileDir = profileDirFor(deps.env, label);
+    const run = () => signIn(label, deps, handle);
+    result = await withProfile(profileDir, 0, run).catch(async (e) => {
+      if (e.code !== "locked") throw e;
+      // "Waiting for the refresh to finish…"
+      await handle.waiting();
+      return withProfile(profileDir, PROFILE_WAIT_SECONDS, run);
+    }).catch((e) => {
+      // Cancel stops the unit, whose SIGTERM also ends the waiting flock.
+      if (handle.signal.aborted) return (handle.outcome = "cancelled");
+      if (e.code === "locked") return "busy";
+      throw e;
+    });
+    return 0;
+  });
+  return result;
 }
 
-async function signIn(label, { stateDir, env, now, chrome, sleep, timeZone, log }) {
+async function signIn(label, { stateDir, env, now, chrome, sleep, timeZone, log }, handle) {
   const key = connectionKey(label);
   const { sources, shipments } = await readState(stateDir);
   const conn = sources.connections[key];
   if (!conn) return "unknown-account";
   const profileDir = profileDirFor(env, label);
 
+  // Cancelled while waiting for the profile: no window at all.
+  if (handle.signal.aborted) return (handle.outcome = "cancelled");
+  const deadline = await handle.window();
   let tab;
   try {
     tab = await openAccountBrowser(chrome, { profileDir, port: conn.port, hidden: false });
@@ -242,9 +263,13 @@ async function signIn(label, { stateDir, env, now, chrome, sleep, timeZone, log 
   }
   let handedOver = false;
   try {
-    const deadline = new Date(now().getTime() + LOGIN_DEADLINE_MS);
-    const signedIn = await waitForSignIn(tab, { now, sleep, deadline });
-    if (signedIn !== "ok") return signedIn;
+    const signedIn = await waitForSignIn(tab, { now, sleep, deadline, signal: handle.signal });
+    if (signedIn !== "ok") {
+      handle.outcome = signedIn;
+      return signedIn;
+    }
+    handle.outcome = "ok";
+    await handle.syncing();
     await tab.hide();
     const known = (k) => shipments.shipments.find((s) => s.key === k);
     handedOver = true;

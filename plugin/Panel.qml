@@ -11,6 +11,8 @@
 //   omarchy-shell kreuzhofer.shipment-tracker retry <key> same as a banner's Retry
 //   omarchy-shell kreuzhofer.shipment-tracker dismiss <k> / undismiss <k>   a row's dismiss button
 //   omarchy-shell kreuzhofer.shipment-tracker showDismissed <true|false>  the footer's "show"
+//   omarchy-shell kreuzhofer.shipment-tracker login <key> same as a banner's Log in
+//   omarchy-shell kreuzhofer.shipment-tracker cancelLogin same as the progress banner's Cancel
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -56,6 +58,8 @@ Panel {
     function dismiss(key: string): void { backend.dismiss(key) }
     function undismiss(key: string): void { backend.undismiss(key) }
     function showDismissed(show: bool): void { backend.showDismissed = show }
+    function login(key: string): void { backend.login(key) }
+    function cancelLogin(): void { backend.cancelLogin() }
   }
 
   KeyboardPanel {

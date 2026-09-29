@@ -262,6 +262,9 @@ test("a manual Order's dropped package rows don't come back through the owning a
 test("a manual Order no account owned is dropped after 30 days, and its packages don't come back when an account lists it later", async (t) => {
   const routes = { history: listing(OTHER_ORDER), trackers: packageTracker(OTHER_ORDER, "IN_TRANSIT"), search: { [MANUAL_ORDER]: listing() } };
   const world = await businessAccount(t, routes);
+  // The Login's paced page reads moved the clock a random 5–15 s on; the add
+  // (its changedAt) happens at day 0 sharp, so day 30 is exactly 30 days later.
+  world.setClock(day(0));
   assert.equal(await world.run("add", MANUAL_ORDER), 0);
   assert.equal((await refreshOn(world, 0)).shipments.find((s) => s.key === `amazon:${MANUAL_ORDER}`).linkOnly, true);
 

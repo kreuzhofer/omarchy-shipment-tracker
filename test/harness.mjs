@@ -174,6 +174,11 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
     sleeps: [],
     logs: [],
     output: [],
+    // systemd user units that `systemctl --user is-active` reports running.
+    activeUnits: new Set(),
+    cancelListeners: new Set(),
+    // What Cancel (the unit's SIGTERM) or Ctrl-C does to a running Login.
+    cancel() { for (const fn of world.cancelListeners) fn(); },
     setClock(iso) { world.now = new Date(iso); },
     async run(...argv) {
       return main(argv, {
@@ -186,6 +191,14 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
         sleep: async (ms) => { world.sleeps.push(ms); world.now = new Date(world.now.getTime() + ms); },
         log: (line) => world.logs.push(line),
         out: (line) => world.output.push(line),
+        exec: async (file, args) => {
+          if (file === "systemctl" && args[0] === "--user" && args[1] === "is-active") return { code: world.activeUnits.has(args.at(-1)) ? 0 : 3, stdout: "", stderr: "" };
+          throw Object.assign(new Error(`unexpected command ${file} ${args.join(" ")}`), { code: "unexpected" });
+        },
+        onCancel: (fn) => {
+          world.cancelListeners.add(fn);
+          return () => world.cancelListeners.delete(fn);
+        },
       });
     },
     async shipmentsFile() { return JSON.parse(await readFile(join(stateDir, "shipments.json"), "utf8")); },
@@ -266,13 +279,26 @@ function answer(r) {
 
 // A fake Chrome for `login`: it records where the login profile lives and
 // "logs in" by answering the authorize URL with the app redirect, carrying the
-// authorize request's state. outcome: "success" | "cancelled" | "timed-out" | "browser".
+// authorize request's state. outcome: "success" | "cancelled" | "timed-out" | "browser",
+// or "open": the window stays open until the Login is cancelled (its signal)
+// or the test calls finish(outcome). `opened` resolves once a window is open;
+// `timeoutMs` records the deadline it was given.
 export function fakeBrowser({ outcome = "success", code = "fake-code" } = {}) {
+  let markOpened;
   const browser = {
     outcome,
     launches: [],
-    async catchRedirect({ url, profileDir, redirectPrefix }) {
-      browser.launches.push({ url, profileDir });
+    opened: new Promise((resolve) => { markOpened = resolve; }),
+    finish: () => {},
+    async catchRedirect({ url, profileDir, redirectPrefix, timeoutMs, signal }) {
+      browser.launches.push({ url, profileDir, timeoutMs });
+      if (browser.outcome === "open") {
+        browser.outcome = await new Promise((resolve) => {
+          browser.finish = resolve;
+          signal?.addEventListener("abort", () => resolve("cancelled"), { once: true });
+          markOpened();
+        });
+      }
       if (browser.outcome !== "success") throw Object.assign(new Error(`fake ${browser.outcome}`), { code: browser.outcome });
       const state = new URL(url).searchParams.get("state");
       return `${redirectPrefix}?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;

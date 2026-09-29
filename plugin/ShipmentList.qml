@@ -77,6 +77,9 @@ Column {
       readonly property var c: modelData.connection
       readonly property bool down: c.health === "source-down"
       readonly property color tone: down ? Qt.darker(root.fg, 1.3) : Color.urgent
+      // The Login progress banner stands in for it while this Connection logs in.
+      readonly property bool loggingIn: root.store && root.store.activeLogin && root.store.activeLogin.key === modelData.key
+      visible: !loggingIn
       width: root.width
       height: Math.max(bannerText.implicitHeight, bannerButton.implicitHeight) + Style.space(12)
       radius: Style.cornerRadius
@@ -102,7 +105,8 @@ Column {
         wrapMode: Text.WordWrap
         maximumLineCount: 2
         elide: Text.ElideRight
-        text: root.store ? Shipments.bannerText(banner.modelData.key, banner.c, root.store.nowMs) : ""
+        text: root.store ? Shipments.bannerText(banner.modelData.key, banner.c, root.store.nowMs)
+          + (!banner.down && root.store.loginBlockedText !== "" ? " · " + root.store.loginBlockedText : "") : ""
         color: banner.down ? Qt.darker(root.fg, 1.15) : root.fg
         font.family: root.ff; font.pixelSize: Style.font.bodySmall
       }
@@ -112,9 +116,11 @@ Column {
         anchors.rightMargin: Style.space(6)
         anchors.verticalCenter: parent.verticalCenter
         readonly property string actionText: Shipments.bannerAction(banner.c)
-        // Retry waits for the run it started.
-        enabled: !(actionText === "Retry" && root.store && root.store.refreshing)
-        text: enabled ? actionText : "Retrying…"
+        // Retry waits for the run it started; Log in waits for the other Login.
+        readonly property bool retrying: actionText === "Retry" && root.store && root.store.refreshing
+        enabled: !retrying && !(actionText !== "Retry" && root.store && root.store.activeLogin)
+        opacity: enabled ? 1 : 0.45
+        text: retrying ? "Retrying…" : actionText
         bordered: true; fontSize: Style.font.bodySmall
         onClicked: {
           if (actionText === "Retry") root.store.retry(banner.modelData.key)
@@ -123,6 +129,8 @@ Column {
       }
     }
   }
+
+  LoginBanner { width: root.width; store: root.store; fg: root.fg; ff: root.ff }
 
   // The rows as a ListModel kept in step with store.recentShipments by key,
   // so a row that leaves or arrives (dismissed, shown again, in or out of the

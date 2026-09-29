@@ -7,8 +7,9 @@
 // target and watches every CDP event for a URL starting with `redirectPrefix`
 // (live, DHL's `dhllogin://` arrived in Network.responseReceivedExtraInfo, the
 // raw 302 headers). It resolves with that URL and closes the window. It
-// rejects with code "cancelled" when the user closes the window, "timed-out"
-// after `timeoutMs`, or "browser" when Chrome or CDP doesn't come up.
+// rejects with code "cancelled" when the user closes the window or `signal`
+// aborts (Cancel), "timed-out" after `timeoutMs`, or "browser" when Chrome or
+// CDP doesn't come up.
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { DHL_LOGIN_PORT } from "./ports.mjs";
@@ -20,7 +21,7 @@ const fail = (code, message) => Object.assign(new Error(message), { code });
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const chromeBrowser = {
-  async catchRedirect({ url, profileDir, redirectPrefix, timeoutMs, port = DHL_LOGIN_PORT }) {
+  async catchRedirect({ url, profileDir, redirectPrefix, timeoutMs, signal, port = DHL_LOGIN_PORT }) {
     await mkdir(profileDir, { recursive: true, mode: 0o700 });
     let chrome;
     try {
@@ -43,7 +44,7 @@ export const chromeBrowser = {
     const wsUrl = await devtoolsUrl(port);
     const ws = new WebSocket(wsUrl);
     try {
-      return await watch(ws, new RegExp(`${escapeRegExp(redirectPrefix)}[^"'\\s\\\\]*`), timeoutMs);
+      return await watch(ws, new RegExp(`${escapeRegExp(redirectPrefix)}[^"'\\s\\\\]*`), timeoutMs, signal);
     } finally {
       await closeBrowser(ws, chrome);
     }
@@ -63,7 +64,7 @@ async function devtoolsUrl(port) {
   throw fail("browser", "Chrome's DevTools endpoint did not come up");
 }
 
-function watch(ws, pattern, timeoutMs) {
+function watch(ws, pattern, timeoutMs, signal) {
   return new Promise((resolve, reject) => {
     let id = 0;
     let settled = false;
@@ -79,6 +80,9 @@ function watch(ws, pattern, timeoutMs) {
       fn(value);
     };
     const timer = setTimeout(() => settle(reject, fail("timed-out", "login timed out")), timeoutMs);
+    const onAbort = () => settle(reject, fail("cancelled", "the login was cancelled"));
+    if (signal?.aborted) onAbort();
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     ws.onopen = () => {
       send("Target.setDiscoverTargets", { discover: true });

@@ -182,13 +182,72 @@ Item {
     Quickshell.execDetached(["systemctl", "--user", "start", "--no-block", "shipment-tracker-refresh@" + Shipments.systemdEscape(key) + ".service"])
   }
 
-  // Log in / Open on a needs-login banner: `login <key>` as a transient unit,
-  // so it survives a shell restart and can't run twice. The Login lifecycle
-  // (progress banner, deadline, one at a time, Cancel) is #30's.
+  // ---- Logins (spec #21, "Login window lifecycle"). `login <key>` runs as a
+  // transient unit, so it survives a shell restart and can't run twice; the
+  // CLI records its progress in the Connection's `login` field.
+
+  // Log in was clicked and the CLI hasn't written its `login` field yet.
+  property string startingLogin: ""
+  // The one Login in progress, { key, connection }, or null.
+  readonly property var activeLogin: {
+    var c = sourcesState.connections || {}
+    var keys = Object.keys(c).filter(function(k) { return Shipments.loginActive(c[k], root.nowMs) })
+    if (keys.length > 0) return { key: keys[0], connection: c[keys[0]] }
+    return startingLogin !== "" ? { key: startingLogin, connection: c[startingLogin] || null } : null
+  }
+  // Why the other Log in buttons are disabled.
+  readonly property string loginBlockedText: activeLogin
+    ? "Finish the " + Shipments.connectionName(activeLogin.key, activeLogin.connection) + " login first" : ""
+  onActiveLoginChanged: {
+    if (startingLogin !== "" && activeLogin && activeLogin.connection && activeLogin.connection.login) startingLogin = ""
+    loginTick.running = !!activeLogin
+  }
+
+  // Log in / Open on a needs-login banner. One Login at a time.
   function login(key) {
-    if (!key) return
-    Quickshell.execDetached(["systemd-run", "--user", "--collect", "--quiet", "--unit=shipment-tracker-login-" + Shipments.systemdEscape(key),
-      "node", root.cliPath, "login", key])
+    if (!key || root.activeLogin || loginProcess.running) return
+    var unit = Shipments.loginUnit(key)
+    root.startingLogin = key
+    loginProcess.command = ["systemd-run", "--user", "--collect", "--quiet", "--unit=" + unit,
+      "--setenv=SHIPMENT_TRACKER_UNIT=" + unit, "--property=RuntimeMaxSec=20min",
+      "node", root.cliPath, "login", key]
+    loginProcess.running = true
+  }
+
+  // Cancel on the progress banner: stopping the unit ends the Login as cancelled.
+  function cancelLogin() {
+    if (!root.activeLogin) return
+    Quickshell.execDetached(["systemctl", "--user", "stop", "--no-block", Shipments.loginUnit(root.activeLogin.key)])
+    root.startingLogin = ""
+  }
+
+  Process {
+    id: loginProcess
+    // systemd-run returns once the unit started; it fails when it can't.
+    onExited: function(exitCode, exitStatus) { if (exitCode !== 0) root.startingLogin = "" }
+  }
+
+  // The CLI writes `login` within a second; give up the optimistic banner
+  // if it never does (Node missing, unit failed at once).
+  Timer {
+    interval: 15000
+    running: root.startingLogin !== ""
+    onTriggered: root.startingLogin = ""
+  }
+
+  // The countdown in the progress banner.
+  Timer {
+    id: loginTick
+    interval: 15000
+    repeat: true
+    onTriggered: root.nowMs = Date.now()
+  }
+
+  // On load: a Login whose unit died with the shell's session (crash,
+  // reboot) is cleared as failed, so nothing sticks at "Connecting…".
+  Process {
+    id: clearStaleProcess
+    command: ["node", root.cliPath, "clear-stale-logins"]
   }
 
   // Returns true when the text was taken (the field can clear).
@@ -320,5 +379,8 @@ Item {
     onTriggered: root.nowMs = Date.now()
   }
 
-  Component.onCompleted: installProcess.running = true
+  Component.onCompleted: {
+    installProcess.running = true
+    clearStaleProcess.running = true
+  }
 }
