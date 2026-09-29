@@ -76,7 +76,10 @@ const CDP_ALLOWED = new Set([
 // A page is an HTML string, { url, html } for a redirect, { error } for a
 // network error, or a function ({ polls }) => page that is re-evaluated on
 // every read (polls = reads since the navigation), e.g. for a user signing in.
-// `{ closed: true }` means the user closed the window.
+// `{ closed: true }` means the user closed the window. `{ url, replaced: true }`
+// is a page that navigated away between DOM.getDocument and DOM.getOuterHTML
+// (a sign-in redirect mid-read): Chrome answers "Could not find node with
+// given id", and the window stays open.
 //   search: { "<orderId>": page } for the order search (/your-orders/search?search=…)
 // Several accounts: `{ accounts: { <label>: routes } }`, picked by the
 // profile directory Chrome is launched with.
@@ -131,7 +134,7 @@ export function fakeChrome(allRoutes = {}, { launchFails = false, busy = false }
         return (ctx) => {
           const p = typeof page === "function" ? page(ctx) : page;
           if (typeof p === "string") return { url, html: p };
-          return p?.error || p?.closed ? p : { url: p.url ?? url, html: p.html };
+          return p?.error || p?.closed ? p : { url: p.url ?? url, html: p.html, replaced: p.replaced };
         };
       };
       return {
@@ -167,6 +170,7 @@ export function fakeChrome(allRoutes = {}, { launchFails = false, busy = false }
             case "DOM.getDocument": return { root: { nodeId: 1 } };
             case "DOM.getOuterHTML": {
               const page = current();
+              if (page.replaced) throw Object.assign(new Error("Could not find node with given id"), { code: "browser" });
               fake.reads.push({ url: page.url, at: fake.clock().getTime() });
               return { outerHTML: page.html };
             }

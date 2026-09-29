@@ -136,6 +136,27 @@ test("login ends as cancelled when the user closes the window, and leaves the ac
   assert.deepEqual(after, before);
 });
 
+// Live, a sign-in redirect that lands between two reads of the page made
+// Chrome answer "Could not find node with given id"; the Login took that for a
+// closed window, closed Chrome and ended as cancelled although the user had
+// signed in.
+test("a sign-in redirect in the middle of a read is not a closed window: the login goes on", async (t) => {
+  const world = await amazonWorld(t, {
+    history: ({ polls }) => (polls < 2 ? { url: SIGN_IN_URL, html: signInPage() }
+      : polls === 2 ? { url: SIGN_IN_URL, replaced: true } : HISTORY),
+    trackers: TRACKERS,
+  });
+  await world.run("accounts", "add", "Personal", "--accept-risk");
+
+  assert.equal(await world.run("login", "amazon:Personal"), 0);
+
+  assert.equal(world.chrome.launches.length, 1);
+  const conn = (await world.sourcesFile()).connections["amazon:Personal"];
+  assert.equal(conn.health, "ok");
+  assert.equal(conn.lastLogin, null);
+  assert.equal(world.chrome.open, false);
+});
+
 test("login times out after 15 minutes", async (t) => {
   const world = await amazonWorld(t, { history: { url: SIGN_IN_URL, html: signInPage() } });
   await world.run("accounts", "add", "Personal", "--accept-risk");

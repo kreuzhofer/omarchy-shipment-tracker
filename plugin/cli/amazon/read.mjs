@@ -140,6 +140,11 @@ function trackerReading(target, { state, carrierText }, now, timeZone) {
 // Waits for the user to sign in in the visible window: success is the order
 // history loading without a challenge. Returns "ok", "cancelled" (the user
 // closed the tab or window, or `signal` aborted: Cancel) or "timed-out".
+//
+// Only `tab.closed` and `signal` mean cancelled. A read that fails while the
+// window is still open is the user's sign-in navigating under it (a redirect
+// between DOM.getDocument and DOM.getOuterHTML makes Chrome answer "Could not
+// find node with given id"), so the next poll tries again.
 export async function waitForSignIn(tab, { now, sleep, deadline, signal }) {
   let closed = false;
   tab.closed.then(() => { closed = true; });
@@ -147,14 +152,18 @@ export async function waitForSignIn(tab, { now, sleep, deadline, signal }) {
   if (signal?.aborted) closed = true;
   try {
     await tab.navigate(HISTORY_URL);
-    while (!closed && now() < deadline) {
+  } catch (e) {
+    if (e.code !== "browser") throw e;
+  }
+  while (!closed && now() < deadline) {
+    try {
       const page = await readPage(tab);
       if (!page.reason && parseHistory(page.html).ok) return "ok";
-      await sleep(2000);
+    } catch (e) {
+      if (e.code !== "browser") throw e;
+      if (closed) break;
     }
-  } catch (e) {
-    if (!closed && e.code !== "browser") throw e;
-    return "cancelled";
+    await sleep(2000);
   }
   return closed ? "cancelled" : "timed-out";
 }
