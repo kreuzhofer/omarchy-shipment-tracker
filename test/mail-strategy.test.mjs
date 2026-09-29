@@ -460,3 +460,113 @@ test("a Terminal row mail wrote before #59 whose mail is still in the window tur
   assert.deepEqual(await keys(world), []);
   assert.deepEqual((await world.shipmentsFile()).events, []);
 });
+
+// ---- 5. Item info for DHL Shipments already listed (#70, the #54 plan)
+
+const searchesFor = (account, number) => account.searches.filter((s) => s.search === `"${number}"`).length;
+
+test("a parcel DHL's list already shows gets its item from the mailbox: one search for its number, the ladder, never a Status", async (t) => {
+  const item = "Retro Plattenspieler";
+  const account = softeriaAccount({
+    mails: [
+      // Older than the 14-day window of the DHL search: only the search for
+      // the number finds it.
+      marketplaceShipped({ trackingNumber: KNOWN_NUMBER, item, at: "2026-09-10T16:00:00Z" }),
+      // Graph's $search is fuzzy: a hit without the number verbatim is ignored.
+      marketplaceShipped({ trackingNumber: "00340434000000000999", item: "Etwas anderes", at: "2026-09-12T16:00:00Z" }),
+    ],
+  });
+  const dhl = fakeDhlAccount({ inbox: { json: fixture("dhl/in-transit.json") }, enrich: { json: fixture("dhl/in-transit.json") } });
+  const world = await mailWorld(t, account, { transport: dhl });
+  await connectMail(world, account);
+  await world.run("login", "dhl");
+  const before = await world.shipment(`dhl:${KNOWN_NUMBER}`);
+  assert.equal(before.itemTitle, undefined);
+
+  assert.equal(await world.run("refresh"), 0);
+
+  const s = await world.shipment(`dhl:${KNOWN_NUMBER}`);
+  assert.deepEqual([s.itemTitle, s.itemSource], [item, "parser"]);
+  assert.equal(s.mailSearchedAt, "2026-09-29T10:00:00.000Z");
+  // Nothing else of the row changes, and nothing is announced.
+  for (const field of ["status", "estimate", "delayed", "changedAt", "connections", "title", "notified"]) {
+    assert.deepEqual(s[field], before[field], field);
+  }
+  assert.deepEqual((await world.shipmentsFile()).events, []);
+  assert.equal(searchesFor(account, KNOWN_NUMBER), 1);
+  assert.deepEqual(account.gets.map((g) => g["message-id"]), [account.mails[0].id]);
+  assert.ok(!readFileSync(join(world.stateDir, "shipments.json"), "utf8").includes("beispiel_verkauf"));
+
+  // Never searched again.
+  world.setClock("2026-09-29T11:00:00.000Z");
+  await world.run("refresh");
+  assert.equal(searchesFor(account, KNOWN_NUMBER), 1);
+  assert.equal(account.gets.length, 1);
+  assert.equal((await world.shipment(`dhl:${KNOWN_NUMBER}`)).itemTitle, item);
+});
+
+test("at most 5 searches per run, each Shipment once, also when no mail names it", async (t) => {
+  const numbers = Array.from({ length: 7 }, (_, i) => `0034043400000000071${i}`);
+  const account = softeriaAccount({
+    // No mail for the last number.
+    mails: numbers.slice(0, 6).map((n, i) => marketplaceShipped({ trackingNumber: n, item: `Teil Nummer ${i + 1}`, at: "2026-09-01T10:00:00Z" })),
+  });
+  const routes = Object.fromEntries(numbers.map((n) => [n, dhlElement("in-transit", n)]));
+  const world = await mailWorld(t, account, { transport: fakeDhl(routes) });
+  await connectMail(world, account);
+  for (const n of numbers) await world.run("add", n);
+
+  const searched = () => numbers.filter((n) => searchesFor(account, n) > 0).length;
+  await world.run("refresh");
+  assert.equal(searched(), 5);
+  world.setClock("2026-09-29T11:00:00.000Z");
+  await world.run("refresh");
+  assert.equal(searched(), 7);
+  world.setClock("2026-09-29T12:00:00.000Z");
+  await world.run("refresh");
+  assert.ok(numbers.every((n) => searchesFor(account, n) === 1));
+
+  const list = await shipments(world);
+  assert.deepEqual(list.map((s) => s.itemTitle ?? null).sort(), [...numbers.slice(0, 6).map((_, i) => `Teil Nummer ${i + 1}`), null].sort());
+  assert.ok(list.every((s) => s.mailSearchedAt && s.status === "In transit"));
+  assert.deepEqual((await world.shipmentsFile()).events, []);
+});
+
+test("a Terminal Shipment is searched only when it turned Terminal in the last 7 days; one with an item or found in mail isn't searched", async (t) => {
+  const [RECENT, OLD, NAMED] = ["00340434000000000801", "00340434000000000802", "00340434000000000803"];
+  const account = softeriaAccount({
+    mails: [
+      marketplaceShipped({ trackingNumber: RECENT, item: "Kürzlich geliefert", at: "2026-09-20T10:00:00Z" }),
+      marketplaceShipped({ trackingNumber: OLD, item: "Längst geliefert", at: "2026-09-15T10:00:00Z" }),
+      marketplaceShipped({ trackingNumber: NAMED, item: "Schon benannt", at: "2026-09-15T10:00:00Z" }),
+      // A new number in recent mail: its own mail already went through the ladder.
+      marketplaceShipped({ trackingNumber: EBAY_NUMBER, item: "Vintage Kamera", at: "2026-09-28T10:00:00Z" }),
+    ],
+  });
+  const world = await mailWorld(t, account, {
+    transport: fakeDhl({ [EBAY_NUMBER]: () => dhlElement("in-transit", EBAY_NUMBER), [NAMED]: () => dhlElement("in-transit", NAMED) }),
+  });
+  await connectMail(world, account);
+  const row = (n, fields) => ({
+    key: `dhl:${n}`, direction: "Incoming", source: "DHL", account: null, carrier: "DHL", connections: ["manual"], title: n,
+    status: "Delivered", estimate: null, delayed: false, trackingNumber: n, url: DHL_PAGE + n,
+    discoveredAt: "2026-09-10T10:00:00.000Z", lastSeenAt: "2026-09-29T09:00:00.000Z", notified: { status: "Delivered", delayed: false },
+    ...fields,
+  });
+  const file = JSON.parse(readFileSync(join(world.stateDir, "shipments.json"), "utf8"));
+  file.shipments = [
+    row(RECENT, { changedAt: "2026-09-27T10:00:00.000Z", terminalAt: "2026-09-27T10:00:00.000Z" }),
+    row(OLD, { changedAt: "2026-09-21T10:00:00.000Z", terminalAt: "2026-09-21T10:00:00.000Z" }),
+    row(NAMED, { status: "In transit", notified: { status: "In transit", delayed: false }, changedAt: "2026-09-27T10:00:00.000Z", itemTitle: "Von Hand", itemSource: "subject" }),
+  ];
+  writeFileSync(join(world.stateDir, "shipments.json"), JSON.stringify(file));
+
+  await world.run("refresh");
+
+  assert.deepEqual([RECENT, OLD, NAMED, EBAY_NUMBER].map((n) => searchesFor(account, n)), [1, 0, 0, 0]);
+  const item = async (n) => (await world.shipment(`dhl:${n}`)).itemTitle ?? null;
+  assert.deepEqual([await item(RECENT), await item(OLD), await item(NAMED), await item(EBAY_NUMBER)],
+    ["Kürzlich geliefert", null, "Von Hand", "Vintage Kamera"]);
+  assert.equal((await world.shipment(`dhl:${RECENT}`)).status, "Delivered");
+  assert.deepEqual((await world.shipmentsFile()).events, []);
+});

@@ -12,6 +12,8 @@
 //   (absorbMailOrders), quietly when the row was already shown.
 // - A DHL number found in mail becomes a watched DHL Shipment, like a manual
 //   add (addMailNumbers), with what the mail says about the item.
+// - A DHL Shipment the list already has gets its item from the mail a search
+//   for its number found (applyItemSearches), once.
 import { orderDetailsUrl } from "../amazon/pages.mjs";
 import { localDate } from "../amazon/status.mjs";
 import { markOf } from "../dismiss.mjs";
@@ -171,9 +173,29 @@ export function addMailNumbers(shipments, numbers, dropped, now) {
     if (isDropped(dropped, `dhl:${trackingNumber}`) || findByTrackingNumber(shipments.shipments, trackingNumber)) continue;
     const s = manualDhlShipment(trackingNumber, now);
     s.connections = [KEY];
+    // Its mail already went through the item ladder: no search for it.
+    s.mailSearchedAt = now.toISOString();
     if (item) Object.assign(s, item);
     shipments.shipments.push(s);
     added++;
   }
   return added;
+}
+
+// The searches for tracking numbers (connection.mjs), under the state lock:
+// each DHL Shipment searched for is marked, so it's never searched again, and
+// gets the item the mail names. Nothing else changes: not the Status, nor
+// the last change, nor anything that notifies. Returns how many got an item.
+export function applyItemSearches(shipments, searched, now) {
+  let named = 0;
+  for (const { trackingNumber, item } of searched) {
+    const s = shipments.shipments.find((x) => x.key === `dhl:${trackingNumber}`);
+    if (!s || s.itemTitle) continue;
+    s.mailSearchedAt = now.toISOString();
+    if (item) {
+      Object.assign(s, item);
+      named++;
+    }
+  }
+  return named;
 }
