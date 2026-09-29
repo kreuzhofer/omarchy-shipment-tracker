@@ -153,7 +153,7 @@ export function fakeChrome(allRoutes = {}, { launchFails = false, busy = false }
   return fake;
 }
 
-export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = fakeDhl({}), browser = fakeBrowser(), chrome = fakeChrome() } = {}) {
+export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = fakeDhl({}), browser = fakeBrowser(), chrome = fakeChrome(), mail = fakeMail() } = {}) {
   const root = await mkdtemp(join(tmpdir(), "shipment-tracker-test-"));
   const env = {
     HOME: root,
@@ -168,6 +168,7 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
     transport,
     browser,
     chrome,
+    mail,
     env,
     stateDir,
     dataDir: join(env.XDG_DATA_HOME, "omarchy-shipment-tracker"),
@@ -187,6 +188,7 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
         transport: world.transport,
         browser: world.browser,
         chrome: world.chrome,
+        mcp: world.mail,
         // Pacing waits advance the fixed clock instead of sleeping.
         sleep: async (ms) => { world.sleeps.push(ms); world.now = new Date(world.now.getTime() + ms); },
         log: (line) => world.logs.push(line),
@@ -211,6 +213,7 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
     async cleanup() { await rm(root, { recursive: true, force: true }); },
   };
   chrome.clock = () => world.now;
+  mail.clock = () => world.now;
   return world;
 }
 
@@ -315,4 +318,54 @@ export async function holdLock(path) {
   const exited = new Promise((resolve) => holder.once("close", resolve));
   await new Promise((resolve) => holder.stdout.once("data", resolve));
   return async () => { holder.stdin.end(); await exited; };
+}
+
+// ---- Microsoft 365 mail (spec #21, "Source adapters · Microsoft 365 mail")
+
+// An MCP tool answer as Softeria sends it: JSON text content.
+export const toolAnswer = (value, { isError = false } = {}) => ({
+  content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }],
+  ...(isError ? { isError: true } : {}),
+});
+
+// A fake Softeria ms-365-mcp-server behind the MCP transport. `tools` maps a
+// tool name to a recorded answer or a function (args, server) => answer,
+// where server = { env, fake } (env: the MS365_MCP_* variables it was started
+// with). A tool without an answer fails the test. Options: startFails
+// ("server" | "network": the server can't be installed or started).
+// Records starts ({ args, env, install }), calls ({ name, arguments, at })
+// with the world clock, and how many servers are still open.
+export function fakeMail(tools = {}, { startFails = null } = {}) {
+  const fake = {
+    clock: () => new Date(0),
+    tools,
+    starts: [],
+    calls: [],
+    open: 0,
+    async start({ args, env, install }) {
+      fake.starts.push({ args, env, install });
+      if (startFails) throw Object.assign(new Error("fake server failure"), { code: startFails });
+      fake.open++;
+      let closed = false;
+      return {
+        async request(method, params) {
+          if (closed) throw Object.assign(new Error("server closed"), { code: "server" });
+          if (method === "initialize") return { protocolVersion: params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "Microsoft365MCP", version: "0.156.2" } };
+          if (method !== "tools/call") throw Object.assign(new Error(`unexpected MCP method ${method}`), { code: "unexpected" });
+          fake.calls.push({ name: params.name, arguments: params.arguments, at: fake.clock().toISOString() });
+          let answer = fake.tools[params.name];
+          if (typeof answer === "function") answer = await answer(params.arguments, { env, fake });
+          if (!answer) throw Object.assign(new Error(`no recorded answer for tool ${params.name}`), { code: "unexpected" });
+          if (answer.dies) throw Object.assign(new Error("the mail server exited"), { code: "server" });
+          return answer;
+        },
+        notify() {},
+        async close() {
+          if (!closed) fake.open--;
+          closed = true;
+        },
+      };
+    },
+  };
+  return fake;
 }

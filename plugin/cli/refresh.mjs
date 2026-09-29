@@ -2,10 +2,13 @@
 //
 // Run order (spec #21): the DHL Connection (when logged in), then anonymous
 // lookups of the DHL numbers the Sendungsliste didn't list (manual adds and
-// numbers learned from Amazon), then each Amazon account, then lookups of DHL
-// numbers Amazon showed for the first time. Each number is looked up at most
-// once per run. `source` limits the run to one Connection key ("dhl" or
-// "amazon:<label>", for Retry); lookups then wait for the next full run.
+// numbers learned from Amazon), then the Microsoft 365 mailbox, then each
+// Amazon account (so an Order first seen in mail gets its tracker page in the
+// same run), then lookups of DHL numbers Amazon showed for the first time.
+// Each number is looked up at most once per run. `source` limits the run to
+// one Connection key ("dhl", "mail" or "amazon:<label>", for Retry); lookups
+// then wait for the next full run. A Connection that fails never stops the
+// others.
 //
 // Network requests happen outside the state lock; their results are applied
 // under it, re-reading the files first so a concurrent `add` is never lost.
@@ -24,6 +27,7 @@ import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
 import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
+import { KEY as MAIL, refreshMail } from "./mail/connection.mjs";
 import { clearUpdatedDismissals } from "./dismiss.mjs";
 import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
 import { recordConnectionEvents, recordFailure } from "./health.mjs";
@@ -43,7 +47,7 @@ const needsLookup = (s) => !TERMINAL.has(s.status)
 
 // `firstSync`: this run is the first sync of the `source` Connection after a
 // Login, so what it discovers is not announced as new.
-export async function refresh({ stateDir, env, now, transport, chrome, sleep, timeZone, log, exec, source = null, firstSync = false }) {
+export async function refresh({ stateDir, env, now, transport, chrome, mcp, sleep, timeZone, log, exec, source = null, firstSync = false }) {
   const attempted = new Set();
   const counts = { lookedUp: 0, unknown: 0, failed: 0, network: 0, synced: 0 };
   // Called by every part of the run that got to write its results.
@@ -57,6 +61,7 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
   // DHL runs first, so whether its network failure is its own (something
   // else in the run got through) is only known at the end of the run.
   let dhlNetworkFailure = false;
+  let mailNetworkFailure = false;
   // The header reads "Refreshing…" while this is set. A Login whose process
   // is gone ends as failed, so nothing sticks at "Connecting…".
   const quiet = await updateState(stateDir, async ({ shipments, sources }) => {
@@ -130,6 +135,11 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
   };
   await lookUp();
 
+  if (source === null || source === MAIL) {
+    const mail = await refreshMail({ stateDir, mcp, now, timeZone, log, counts, finishRun });
+    mailNetworkFailure = mail?.reason === "network" && !mail.counted;
+  }
+
   if (source === null || source.startsWith("amazon:")) {
     await refreshAmazon({ stateDir, env, now, chrome, sleep, timeZone, log, counts, finishRun, only: source });
     await lookUp({ afterAmazon: true });
@@ -142,6 +152,9 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
     state.sources.refreshing = null;
     if (dhlNetworkFailure && (counts.synced > 0 || counts.lookedUp > 0) && state.sources.connections?.[DHL]) {
       recordFailure(state.sources.connections[DHL], now(), "network", { countNetwork: true });
+    }
+    if (mailNetworkFailure && (counts.synced > 0 || counts.lookedUp > 0) && state.sources.connections?.[MAIL]) {
+      recordFailure(state.sources.connections[MAIL], now(), "network", { countNetwork: true });
     }
     const dropped = applyRetention(state, now());
     // Notifications ignore dismissals; an update notifies and brings the row

@@ -12,6 +12,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { forgetConnection } from "../disconnect.mjs";
 import { clearUpdatedDismissals } from "../dismiss.mjs";
 import { markKnown, recordEvents } from "../events.mjs";
+import { absorbMailOrders } from "../mail/connection.mjs";
 import { connectionRecord, recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { withLock } from "../lock.mjs";
 import { runLogin } from "../logins.mjs";
@@ -153,6 +154,8 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     const dropped = droppedKeys(shipments);
     const kept = readings.filter((r) => !isDropped(dropped, r.key));
     for (const reading of kept) upsert(shipments.shipments, reading, conn, key, at);
+    // An Order mail found first is now read here: one Shipment per parcel.
+    absorbMailOrders(shipments.shipments, kept.map((r) => r.orderId));
     applyOwnership(shipments.shipments, key, conn.label, { ...result, readings: kept });
     // A Login that reached the order history has proven the session, even if
     // its first sync then fails for another reason.

@@ -400,9 +400,15 @@ Item {
     return Object.keys(c).filter(function(k) { return k.indexOf("amazon:") === 0 && c[k] })
       .map(function(k) { return { key: k, connection: c[k] } })
   }
-  // Microsoft 365 mail comes with #34. Until then its row is a placeholder
-  // and never opens by itself; #34 sets this to true.
-  readonly property bool mailAvailable: false
+  // Microsoft 365 mail (#34): its row opens by itself when it's the first
+  // Source not set up.
+  readonly property bool mailAvailable: true
+  // Under the device code: "Sign in with your work account · 14 min left".
+  readonly property string mailCodeHint: Shipments.codeHint(connection("mail"), nowMs)
+  // Copy code on the mail row.
+  function copyText(text) {
+    if (text) Quickshell.execDetached(["wl-copy", "--", String(text)])
+  }
 
   // Node.js runs the CLI: null until checked, then true / false. Without it
   // the Sources rows and the add field offer to install it.

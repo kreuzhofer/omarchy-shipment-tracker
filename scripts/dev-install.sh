@@ -8,6 +8,8 @@ id=kreuzhofer.shipment-tracker
 src="$(cd "$(dirname "$0")/../plugin" && pwd)"
 dest="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$id"
 mkdir -p "$dest"
-rsync -a --delete "$src/" "$dest/"
+# The mail server installs itself into mail-server/node_modules on first use;
+# keep that copy across installs.
+rsync -a --delete --exclude node_modules/ "$src/" "$dest/"
 echo "Copied to $dest"
 echo "First time: omarchy-shell shell rescanPlugins && omarchy plugin enable $id"

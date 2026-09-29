@@ -12,15 +12,17 @@ import { releaseOwnership, settleLinkOnly } from "./amazon/manual.mjs";
 import { forgetTokens } from "./dhl/auth.mjs";
 import { connectionName, connectionRecord } from "./health.mjs";
 import { clearStaleLogins } from "./logins.mjs";
+import { signOutMail } from "./mail/connection.mjs";
 import { dataDirFor, updateState } from "./state.mjs";
 
-// What `disconnect <key>` deletes, per Connection. Mail (#34) adds `mail`:
-// Softeria's logout, which clears its token cache.
+// What `disconnect <key>` deletes, per Connection. Mail: Softeria's logout,
+// which clears its token cache (see mail/connection.mjs).
 const SIGN_INS = {
   async dhl({ stateDir, env }) {
     await forgetTokens(stateDir);
     await rm(join(dataDirFor(env), "dhl"), { recursive: true, force: true });
   },
+  mail: signOutMail,
 };
 
 export const disconnectable = () => Object.keys(SIGN_INS);
@@ -37,7 +39,7 @@ export function forgetConnection({ sources, shipments }, key, at) {
 
 // `disconnect <dhl|…>`. Refused while that Connection's Login runs: the
 // Login would sign it in again. Disconnecting what isn't connected is fine.
-export async function disconnect(args, { stateDir, env, now, exec, log, out }) {
+export async function disconnect(args, { stateDir, env, now, exec, mcp, log, out }) {
   const [key] = args;
   if (args.length !== 1 || !Object.hasOwn(SIGN_INS, key)) {
     log(`usage: shipment-tracker disconnect <${disconnectable().join("|")}>`);
@@ -52,7 +54,7 @@ export async function disconnect(args, { stateDir, env, now, exec, log, out }) {
     log(`disconnect: Finish or cancel the ${name} login first`);
     return 1;
   }
-  await SIGN_INS[key]({ stateDir, env });
+  await SIGN_INS[key]({ stateDir, env, mcp, log });
   await updateState(stateDir, (state) => forgetConnection(state, key, now()));
   out(`Disconnected ${name}`);
   return 0;
