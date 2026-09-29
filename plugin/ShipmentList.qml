@@ -201,13 +201,13 @@ Column {
 
   PanelSeparator { foreground: root.fg }
 
-  // ---- Footer: manual add
+  // ---- Footer: manual add + notifications toggle
   Row {
     width: parent.width
     spacing: Style.space(6)
     TextField {
       id: addField
-      width: parent.width - addButton.width - Style.space(6)
+      width: parent.width - addButton.width - bell.width - Style.space(12)
       placeholderText: "Add tracking number"
       foreground: root.fg
       font.family: root.ff
@@ -220,6 +220,14 @@ Column {
       text: "Add"
       bordered: true
       onClicked: { if (root.store.add(addField.text)) addField.text = "" }
+    }
+    PanelActionButton {
+      id: bell
+      anchors.verticalCenter: parent.verticalCenter
+      iconText: root.store && root.store.notificationsOn ? "\u{F009A}" : "\u{F009B}"
+      tooltipText: root.store && root.store.notificationsOn ? "Notifications on" : "Notifications off"
+      foreground: root.fg
+      onClicked: root.store.toggleNotifications()
     }
   }
 

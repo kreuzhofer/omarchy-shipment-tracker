@@ -22,7 +22,7 @@ Panel {
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property string ff: bar ? bar.fontFamily : Style.font.family
 
-  Store { id: backend }
+  Store { id: backend; host: root.hostWidget }
 
   onOpenedChanged: if (opened) backend.nowMs = Date.now()
 

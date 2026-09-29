@@ -197,6 +197,7 @@ test("refresh reads the history, then the tracker pages, into Amazon rows", asyn
     orderId: DHL_ORDER,
     url: ORDER_PAGE + DHL_ORDER,
     trackingNumber: DHL_NUMBER,
+    notified: { status: "In transit", delayed: false },
   });
   const amzl = file.shipments.find((s) => s.key === `amazon:${AMZL_ORDER}#1`);
   assert.equal(amzl.carrier, "Amazon Logistics");

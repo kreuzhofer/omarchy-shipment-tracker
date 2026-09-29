@@ -1,10 +1,12 @@
 // The plugin's view of the backend. The shipment-tracker CLI owns all data;
 // this only watches its two state files, starts CLI commands and the refresh
 // service, and keeps the not-yet-written manual adds for immediate feedback.
+// It also turns the CLI's notification events into desktop notifications.
 import QtQuick
 import Quickshell
 import Quickshell.Io
 import "Shipments.js" as Shipments
+import "Notify.js" as Notify
 
 Item {
   id: root
@@ -24,6 +26,10 @@ Item {
   // adds, so the row doesn't flash back before the file is re-read.
   property var removedKeys: []
   property double nowMs: Date.now()
+  // The bar widget, which owns the notifications setting.
+  property var host: null
+  readonly property bool notificationsOn: host ? host.notificationsOn === true : true
+  readonly property string omarchyBin: Quickshell.env("OMARCHY_PATH") ? Quickshell.env("OMARCHY_PATH") + "/bin/" : ""
 
   readonly property string lastRun: sourcesState.lastRun || ""
   readonly property var shipments: {
@@ -70,12 +76,16 @@ Item {
     onFileChanged: reload()
     onLoaded: {
       root.shipmentsState = root.parse(text(), root.shipmentsState)
+      root.handleEvents(root.shipmentsState)
       var listed = {}
       var rows = root.shipmentsState.shipments || []
       rows.forEach(function(s) { listed[s.key] = (s.connections || []).indexOf("manual") >= 0 })
       if (root.removedKeys.length) root.removedKeys = root.removedKeys.filter(function(k) { return listed[k] })
     }
-    onLoadFailed: root.shipmentsState = ({ shipments: [], events: [] })
+    onLoadFailed: {
+      root.shipmentsState = ({ shipments: [], events: [] })
+      root.handleEvents(null)
+    }
   }
 
   FileView {
@@ -86,6 +96,19 @@ Item {
     onFileChanged: reload()
     onLoaded: root.sourcesState = root.parse(text(), root.sourcesState)
     onLoadFailed: root.sourcesState = ({ lastRun: null, refreshing: null, offline: false, connections: {} })
+  }
+
+  function toggleNotifications() {
+    if (root.host && typeof root.host.setNotifications === "function") root.host.setNotifications(!root.notificationsOn)
+  }
+
+  // events[] holds the notifications of the CLI's last run, already filtered
+  // and collapsed (spec #21); the plugin only gates them on the toggle and the
+  // last handled id (see Notify.js).
+  function handleEvents(state) {
+    var fresh = Notify.claim(state)
+    if (!root.notificationsOn) return
+    fresh.forEach(function(e) { Quickshell.execDetached(Notify.command(e, root.omarchyBin)) })
   }
 
   function reloadFiles() {
