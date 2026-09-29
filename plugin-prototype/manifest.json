@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "kreuzhofer.shipments-prototype",
+  "name": "Shipments (PROTOTYPE)",
+  "version": "0.0.1",
+  "author": "kreuzhofer",
+  "license": "MIT",
+  "description": "THROWAWAY popup UX prototype for issue #9. Fake data only.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Shipments (prototype)",
+    "description": "Throwaway popup variants with fake Shipments.",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": { "notifications": true },
+    "schema": [
+      { "key": "notifications", "type": "boolean", "label": "Notify on Status changes", "defaultValue": true }
+    ]
+  }
+}
