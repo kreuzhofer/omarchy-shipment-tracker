@@ -86,6 +86,71 @@ function sourceLabel(s) {
   return label
 }
 
+// ---- Direction tabs and progress cards (#52, variant C of #9)
+
+var tabs = ["Incoming", "Outgoing"]
+
+// "incoming" / "Outgoing" → "Incoming" / "Outgoing"; anything else "".
+function tabName(text) {
+  var t = String(text || "").toLowerCase()
+  return t === "incoming" ? "Incoming" : t === "outgoing" ? "Outgoing" : ""
+}
+
+function inTab(s, tab) {
+  return (s.direction === "Outgoing" ? "Outgoing" : "Incoming") === tab
+}
+
+// The tabs a troubled Connection affects: Amazon, and the mailbox that feeds
+// it, are Incoming only; DHL lists both Directions.
+function connectionTabs(key) {
+  return key === "dhl" ? ["Incoming", "Outgoing"] : ["Incoming"]
+}
+
+// The tab's dot: "urgent" (a Problem, or a Connection that affects the tab
+// needs the user), "accent" (only Ready for pickup) or "" (none). `shipments`
+// are the ones that aren't Dismissed, as for the bar icon.
+function tabDot(tab, shipments, troubled) {
+  var mine = shipments.filter(function(s) { return inTab(s, tab) })
+  if (troubled.some(function(t) { return connectionTabs(t.key).indexOf(tab) >= 0 })) return "urgent"
+  if (mine.some(function(s) { return s.status === "Problem" })) return "urgent"
+  return mine.some(function(s) { return s.status === "Ready for pickup" }) ? "accent" : ""
+}
+
+// An Outgoing card is titled with its recipient ("To Anna K."), unless DHL
+// named no one and the title fell back to the tracking number.
+function cardTitle(s) {
+  if (s.direction !== "Outgoing" || !s.title || s.title === s.trackingNumber) return s.title || ""
+  return "To " + s.title
+}
+
+// The card's 5-step progress bar, as data: { steps, reverse, marker }.
+// Announced 1 · In transit 2 · Out for delivery 4 · Delivered 5; Ready for
+// pickup 4 with the pickup marker; Problem 3 with the warning marker (the
+// step it was on isn't stored); Returning runs backwards from the recipient's
+// end, Returned is the full way back; Unknown is empty. shipments.json has no
+// hub step yet, so In transit stays at 2.
+var PROGRESS = {
+  "Announced": { steps: 1 },
+  "In transit": { steps: 2 },
+  "Out for delivery": { steps: 4 },
+  "Ready for pickup": { steps: 4, marker: "pickup" },
+  "Problem": { steps: 3, marker: "problem" },
+  "Delivered": { steps: 5 },
+  "Returning": { steps: 2, reverse: true, marker: "returning" },
+  "Returned": { steps: 5, reverse: true },
+}
+var STEPS = 5
+
+function progress(s) {
+  var p = PROGRESS[s.status] || { steps: 0 }
+  return { steps: p.steps, reverse: p.reverse === true, marker: p.marker || "" }
+}
+
+// Whether segment `index` (0–4) of the bar is filled.
+function stepFilled(p, index) {
+  return p.reverse ? index >= STEPS - p.steps : index < p.steps
+}
+
 // What the add field would become as a DHL tracking number (mirrors the CLI's
 // parseManualId, for the immediate "Looking up…" row only).
 function normalizeTrackingNumber(text) {

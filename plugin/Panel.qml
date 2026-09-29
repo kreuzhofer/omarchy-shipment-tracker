@@ -8,6 +8,7 @@
 //   omarchy-shell kreuzhofer.shipment-tracker remove <k> same as a row's remove button
 //   omarchy-shell kreuzhofer.shipment-tracker days 7|30  the header's 7 / 30 days switch
 //   omarchy-shell kreuzhofer.shipment-tracker scroll     scroll the list to its end
+//   omarchy-shell kreuzhofer.shipment-tracker tab incoming|outgoing   the list's Direction tabs
 //   omarchy-shell kreuzhofer.shipment-tracker retry <key> same as a banner's Retry
 //   omarchy-shell kreuzhofer.shipment-tracker dismiss <k> / undismiss <k>   a row's dismiss button
 //   omarchy-shell kreuzhofer.shipment-tracker showDismissed <true|false>  the footer's "show"
@@ -64,6 +65,7 @@ Panel {
     function remove(key: string): void { backend.remove(key) }
     function days(n: int): void { backend.setDays(n) }
     function scroll(): void { list.scrollToEnd() }
+    function tab(name: string): void { list.setTab(name) }
     function retry(key: string): void { backend.retry(key) }
     function dismiss(key: string): void { backend.dismiss(key) }
     function undismiss(key: string): void { backend.undismiss(key) }
