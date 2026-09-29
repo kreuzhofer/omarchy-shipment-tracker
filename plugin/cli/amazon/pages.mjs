@@ -54,15 +54,33 @@ export function classifyPage(url, html) {
 // packageIndex, href, title, imageUrl }], orderIds: Set } or { ok: false } when
 // the page isn't the order history (a changed data format).
 //
+// Two layouts, told apart by their containers (#64). The personal history
+// has `.your-orders-content-container` with one `.a-box.delivery-box` per
+// Shipment, items in `.product-image` and `.yohtmlc-product-title`. The
+// Amazon Business history has `#yourOrderHistorySection` with one
+// `#orderCardDeliveryBox` per Shipment, items as `img.itemImageSource` and
+// the title as the item link's text. Tracker and order-details links are the
+// same in both. The site header links to /ap/signin on both; classifyPage
+// doesn't take that for a sign-in page.
+//
 // A box's items come before its tracker link; the last box's chunk runs on to
 // the end of the page (recommendations, footer), so the image is the first
-// `.product-image img` before the link, or none (see images.mjs).
+// item image before the link, or none (see images.mjs).
+const HISTORY_PAGE = [/your-orders-content-container/, /id="yourOrderHistorySection"/];
+const DELIVERY_BOX = /class="a-box delivery-box|id="orderCardDeliveryBox"/;
+const ITEM_IMAGES = [
+  /class="product-image(?:\s[^"]*)?"[^>]*>(?:(?!<\/div>)[\s\S])*?<img\b[^>]*?\ssrc="([^"]*)"/,
+  /<img\b(?=[^>]*\sclass="(?:[^"]*\s)?itemImageSource[\s"])[^>]*?\ssrc="([^"]*)"/,
+];
+const PRODUCT_TITLE = /class="yohtmlc-product-title"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/;
+const ITEM_LINK = /<a\b[^>]*\shref="(?:https:\/\/www\.amazon\.de)?\/(?:dp|gp\/product)\/[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
+
 export function parseHistory(html) {
-  if (!/your-orders-content-container/.test(html)) return { ok: false };
+  if (!HISTORY_PAGE.some((re) => re.test(html))) return { ok: false };
   const orderIds = new Set([...html.matchAll(/\/your-orders\/order-details\?orderID=([\w-]+)/g)].map((m) => m[1]));
   const shipments = [];
   const seen = new Set();
-  for (const box of html.split(/class="a-box delivery-box/).slice(1)) {
+  for (const box of html.split(DELIVERY_BOX).slice(1)) {
     const link = box.match(/href="([^"]*\/progress-tracker\/package[^"]*)"/);
     if (!link) continue;
     const href = new URL(decodeEntities(link[1]), ORIGIN);
@@ -72,14 +90,31 @@ export function parseHistory(html) {
     const key = `${orderId}#${packageIndex}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const title = box.match(/class="yohtmlc-product-title"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/);
-    const image = box.slice(0, link.index).match(/class="product-image(?:\s[^"]*)?"[^>]*>(?:(?!<\/div>)[\s\S])*?<img\b[^>]*?\ssrc="([^"]*)"/);
+    const items = box.slice(0, link.index);
+    const image = firstMatch(items, ITEM_IMAGES);
     shipments.push({
-      orderId, packageIndex, href: href.toString(), title: title ? cleanText(title[1]) : null,
+      orderId, packageIndex, href: href.toString(), title: productTitle(box, items),
       imageUrl: image ? normalizeImageUrl(decodeEntities(image[1])) : null,
     });
   }
   return { ok: true, shipments, orderIds };
+}
+
+// The earliest match of any of `patterns` in `text`.
+function firstMatch(text, patterns) {
+  return patterns.map((re) => text.match(re)).filter(Boolean).sort((a, b) => a.index - b.index)[0] ?? null;
+}
+
+// `.yohtmlc-product-title` where there is one, else the first item link
+// before the tracker link with text (the image's own link has none).
+function productTitle(box, items) {
+  const title = box.match(PRODUCT_TITLE);
+  if (title) return cleanText(title[1]);
+  for (const [, text] of items.matchAll(ITEM_LINK)) {
+    const t = cleanText(text);
+    if (t) return t;
+  }
+  return null;
 }
 
 // A progress-tracker page. Returns { ok: true, state, carrierText } with the

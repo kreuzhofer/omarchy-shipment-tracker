@@ -68,6 +68,68 @@ ${orders.map(orderCard).join("\n")}
 </div></div>${footer}</body></html>`;
 }
 
+// The Amazon Business order history (#64), in the shape of a scrubbed live
+// page: the orders sit in #yourOrderHistorySection, one #orderCard box group
+// per Order (a header with the order-details link, then one
+// #orderCardDeliveryBox per Shipment), items as `<img class="itemImageSource">`
+// with the title as the `/dp/…` link's text, and the tracker link in the box's
+// button stack after the items, next to the packing slip. There is neither
+// `your-orders-content-container` nor `a-box delivery-box`. `orders` as for
+// historyPage; `pending`: cards not rendered yet (skeletons, no links).
+function businessOrderCard({ orderId, shipments }) {
+  const boxes = shipments.map((s) => `
+<div id="orderCardDeliveryBox" class="a-box"><div class="a-box-inner">
+  <div class="a-row"><div class="a-column a-span9"><div class="a-row a-size-medium"><span class="a-color-base a-text-bold">${esc(s.primary ?? "Unterwegs")}</span></div></div></div>
+  <div class="a-row a-spacing-top-medium">
+    <div id="deliveryItemList" class="a-column a-span8"><div class="a-row"></div>${[{ title: s.title, image: s.image }, ...(s.items ?? [])].map(businessItem).join("")}</div>
+    <div class="a-column a-span4 a-span-last"><div class="a-button-stack">
+      <span class="a-button a-spacing-mini a-button-primary"><span class="a-button-inner"><a href="/ps/product-support/order?orderId=${orderId}&amp;ref=ab_ppx_yo_dt_b_ps" class="a-button-text">Produktsupport</a></span></span>
+      <span class="a-button a-spacing-mini a-button-base"><span class="a-button-inner"><a href="/vps/pslip?fnid=Amazon&amp;orderId=${orderId}&amp;_encoding=UTF8&amp;shipmentId=${s.shipmentId}&amp;ref=ab_ppx_yo_dt_b_vps" class="a-button-text">Lieferschein</a></span></span>
+      <span class="a-button a-spacing-mini a-button-base"><span class="a-button-inner"><a href="/progress-tracker/package?orderId=${orderId}&amp;_encoding=UTF8&amp;shipmentId=${s.shipmentId}&amp;packageIndex=${s.packageIndex}&amp;vt=NOTIFICATIONS&amp;ref=ab_ppx_yo_dt_b_track_package" class="a-button-text">Lieferung verfolgen</a></span></span>
+    </div></div>
+  </div>
+</div></div>`).join("");
+  return `
+<div id="orderCard" class="a-box-group a-spacing-top-base">
+  <input type="hidden" name="aggregatedFields" value="{&quot;orderId&quot;:&quot;${orderId}&quot;,&quot;shipToFullName&quot;:&quot;Erika Musterfrau&quot;,&quot;placedByGroup&quot;:&quot;Beispiel GmbH&quot;}">
+  <div id="orderCardHeader" class="a-box _cDEzb_your-orders-box-styling_0aaaa"><div class="a-box-inner"><div class="a-row">
+    <div class="a-column a-span2"><div class="a-row a-color-secondary">Bestellung aufgegeben</div><div class="a-row a-size-base">25. September 2026</div></div>
+    <div class="a-column a-span4 a-text-right a-span-last"><ul class="a-unordered-list a-nostyle a-vertical">
+      <li id="orderIdField"><span class="a-list-item"><div class="a-row"><span id="orderIdLabel" class="a-color-secondary">Bestellnr.</span> <span dir="auto">${orderId}</span></div></span></li>
+      <li><span class="a-list-item"><a class="a-link-normal" href="/your-orders/order-details?orderID=${orderId}&amp;ref=ab_ppx_yo_dt_b_fed_order_details">Bestelldetails anzeigen</a></span></li>
+    </ul></div>
+  </div></div></div>
+  ${boxes}
+</div>`;
+}
+
+function businessItem({ title, image = DEFAULT_IMAGE }) {
+  const img = image === null ? "" : `<img alt="" src="${esc(image)}" class="itemImageSource">`;
+  return `
+      <div id="itemDetail" class="a-row itemDetails">
+        <div class="a-column a-span2 imageContainer"><a class="a-link-normal itemImage" href="/dp/B000000000?ref=fed_asin_title">${img}</a></div>
+        <div class="a-column a-span10 a-span-last">
+          <div class="a-row"><a class="a-link-normal" href="/dp/B000000000?ref=fed_asin_title">${esc(title)}</a></div>
+          <!-- New DeviceEnrollmentStatus section -->
+          <div class="a-row"><span class="a-size-base a-color-price">12,34 €</span></div>
+          <div class="a-row"><span class="a-button a-button-primary a-button-small"><span class="a-button-inner"><a href="/gp/buyagain?ats=example&amp;ref=bia_item_f" class="a-button-text">Erneut kaufen</a></span></span></div>
+        </div>
+      </div>`;
+}
+
+const PENDING_CARD = `
+<div class="a-box-group a-spacing-top-base"><div class="a-box orderCardHeaderSkeleton"><div class="a-box-inner"></div></div>
+<div class="a-box"><div class="a-box-inner"><div class="orderCardItemImageSkeleton"></div></div></div></div>`;
+
+export function businessHistoryPage(orders, { footer = "", pending = 0 } = {}) {
+  return `${head("Meine Bestellungen")}<body>${NAV}
+<div id="yourOrderPageTitle" class="a-column a-span5"><h1>Meine Bestellungen</h1></div>
+<div id="yourOrderTabFilter" class="a-row"><div class="a-search a-span7"><input type="search" id="abYoSearchBar" placeholder="Artikel-, Bestell- oder Auftragsnummer"></div></div>
+<div id="yourOrderHistorySection" class="a-row a-spacing-medium a-spacing-top-small"><div id="yourOrderInfoSection" class="a-section">
+${orders.map(businessOrderCard).join("\n")}${PENDING_CARD.repeat(pending)}
+</div></div>${footer}</body></html>`;
+}
+
 // A progress-tracker page. `state` is merged over a delivered-by-DHL default;
 // `carrierLine` is the delivery card's heading ("Versendet mit DHL").
 export function trackerPage(state, { carrierLine } = {}) {
