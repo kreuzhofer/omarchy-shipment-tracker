@@ -16,7 +16,7 @@ export function stateDirFor(env) {
 }
 
 const emptyShipments = () => ({ shipments: [], dropped: [], lastEventId: 0, events: [] });
-const emptySources = () => ({ lastRun: null, refreshing: null, offline: false, connections: {} });
+const emptySources = () => ({ lastRun: null, lastOnline: null, refreshing: null, offline: false, connections: {} });
 
 async function readJson(path, fallback) {
   let text;

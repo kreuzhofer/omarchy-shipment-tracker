@@ -8,6 +8,7 @@
 //   omarchy-shell kreuzhofer.shipment-tracker remove <k> same as a row's remove button
 //   omarchy-shell kreuzhofer.shipment-tracker days 7|30  the header's 7 / 30 days switch
 //   omarchy-shell kreuzhofer.shipment-tracker scroll     scroll the list to its end
+//   omarchy-shell kreuzhofer.shipment-tracker retry <key> same as a banner's Retry
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -49,6 +50,7 @@ Panel {
     function remove(key: string): void { backend.remove(key) }
     function days(n: int): void { backend.setDays(n) }
     function scroll(): void { list.scrollToEnd() }
+    function retry(key: string): void { backend.retry(key) }
   }
 
   KeyboardPanel {

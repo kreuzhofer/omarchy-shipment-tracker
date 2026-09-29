@@ -15,12 +15,15 @@
 // Notification events: every Shipment that has been read gets its mark at the
 // start (markKnown), and the run's events are recorded once at the end, after
 // every Connection, so the >3 collapse sees the whole run (see events.mjs).
+// Connection events (entering needs-login) follow them, from the same id
+// sequence (see health.mjs).
 import { refreshAmazon } from "./amazon/connection.mjs";
 import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
 import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
 import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
+import { recordConnectionEvents, recordFailure } from "./health.mjs";
 import { applyDhlReading, carriedByDhl } from "./merge.mjs";
 import { applyRetention } from "./retention.mjs";
 import { TERMINAL } from "./shipments.mjs";
@@ -42,9 +45,14 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
   // Called by every part of the run that got to write its results.
   const finishRun = (sources, at) => {
     sources.lastRun = at.toISOString();
-    // Offline is not an error: only the subtitle changes.
+    // Offline is not an error: only the subtitle changes. `lastOnline` is
+    // the last run that got through ("Offline · updated 3 h ago").
     sources.offline = counts.network > 0 && counts.network === counts.failed && counts.lookedUp === 0 && counts.synced === 0;
+    if (!sources.offline) sources.lastOnline = sources.lastRun;
   };
+  // DHL runs first, so whether its network failure is its own (something
+  // else in the run got through) is only known at the end of the run.
+  let dhlNetworkFailure = false;
   // The header reads "Refreshing…" while this is set.
   const quiet = await updateState(stateDir, ({ shipments, sources }) => {
     sources.refreshing = { startedAt: now().toISOString() };
@@ -54,11 +62,17 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
   if (firstSync && source) quiet.add(source);
 
   if ((source === null || source === DHL) && await hasTokens(stateDir)) {
-    const outcome = await syncDhl({ stateDir, transport, now });
+    // The empty-list check compares with the last successful sync; a Login's
+    // first sync skips it.
+    const previousCount = firstSync && source === DHL ? 0 : (await readState(stateDir)).sources.connections?.[DHL]?.lastCount ?? 0;
+    const outcome = await syncDhl({ stateDir, transport, now, previousCount });
     if (outcome.ok) counts.synced++;
     else {
       counts.failed++;
-      if (outcome.reason === "network") counts.network++;
+      if (outcome.reason === "network") {
+        counts.network++;
+        dhlNetworkFailure = true;
+      }
     }
     const listed = await updateState(stateDir, (state) => {
       const at = now();
@@ -114,11 +128,16 @@ export async function refresh({ stateDir, env, now, transport, chrome, sleep, ti
   }
 
   // "Refreshing…" lasts the whole run, Amazon's paced page reads included.
-  // Retention runs before the events, so a Shipment dropped now tells nothing.
+  // Retention runs before the events, so a Shipment dropped now tells nothing;
+  // Connection events follow the Shipment events.
   const { told, dropped } = await updateState(stateDir, (state) => {
     state.sources.refreshing = null;
+    if (dhlNetworkFailure && (counts.synced > 0 || counts.lookedUp > 0) && state.sources.connections?.[DHL]) {
+      recordFailure(state.sources.connections[DHL], now(), "network", { countNetwork: true });
+    }
     const dropped = applyRetention(state, now());
-    return { told: recordEvents(state.shipments, { firstSync: quiet }), dropped };
+    const told = recordEvents(state.shipments, { firstSync: quiet }) + recordConnectionEvents(state.shipments, state.sources);
+    return { told, dropped };
   });
   if (dropped > 0) log(`refresh: ${dropped} Shipment(s) past retention dropped`);
   if (told > 0) log(`refresh: ${told} notification event(s)`);

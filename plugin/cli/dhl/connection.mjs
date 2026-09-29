@@ -39,20 +39,38 @@ export function readListing(element) {
 
 // Returns { ok: true, elements } with every element of the Sendungsliste, or
 // { ok: false, reason } ("not-set-up" | "expired" | "account-link-lost" |
-// "network" | "http" | "shape" | "rate-limited").
-export async function syncDhl({ stateDir, transport, now }) {
-  const token = await renewIdToken({ stateDir, transport, now });
-  if (!token.ok) return token;
-
-  const inbox = await search(transport, { idToken: token.idToken });
+// "empty-list" | "network" | "http" | "shape" | "rate-limited").
+//
+// The empty-list check (spec #21, check 3): a lost session also answers an
+// empty list with HTTP 200. When the last successful sync listed something
+// (`previousCount` > 0) and this one lists nothing, the token is renewed once
+// more and the list asked again; still empty is `empty-list` (needs-login).
+// An account that has always been empty stays ok. A Login's first sync passes
+// no previousCount: a fresh login proves the session.
+export async function syncDhl({ stateDir, transport, now, previousCount = 0 }) {
+  let inbox = await readInbox({ stateDir, transport, now });
   if (!inbox.ok) return inbox;
+  if (inbox.sendungen.length === 0 && previousCount > 0) {
+    inbox = await readInbox({ stateDir, transport, now });
+    if (!inbox.ok) return inbox;
+    if (inbox.sendungen.length === 0) return { ok: false, reason: "empty-list" };
+  }
   const ids = inbox.sendungen.map((e) => e?.id).filter((id) => typeof id === "string" && id !== "");
   if (ids.length !== inbox.sendungen.length) return { ok: false, reason: "shape" };
   if (ids.length === 0) return { ok: true, elements: [] };
 
-  const enriched = await search(transport, { idToken: token.idToken, piececodes: ids });
+  const enriched = await search(transport, { idToken: inbox.idToken, piececodes: ids });
   if (!enriched.ok) return enriched;
   return { ok: true, elements: enriched.sendungen.filter((e) => typeof e?.id === "string" && e.id !== "") };
+}
+
+// A token renewal, then the inbox call: { ok: true, idToken, sendungen } or a failure.
+async function readInbox({ stateDir, transport, now }) {
+  const token = await renewIdToken({ stateDir, transport, now });
+  if (!token.ok) return token;
+  const inbox = await search(transport, { idToken: token.idToken });
+  if (!inbox.ok) return inbox;
+  return { ok: true, idToken: token.idToken, sendungen: inbox.sendungen };
 }
 
 // Applies a sync's outcome to the state files (under the state lock). Returns
