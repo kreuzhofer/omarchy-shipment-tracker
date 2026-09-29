@@ -71,6 +71,9 @@ async function add(args, stateDir, { now, log, out }) {
     return 2;
   }
   const added = await updateState(stateDir, ({ shipments }) => {
+    // Adding a dropped Shipment or Order by hand tracks it again (see retention.mjs).
+    const key = `${parsed.kind}:${parsed.id}`;
+    shipments.dropped = shipments.dropped.filter((d) => d.key !== key && !d.key.startsWith(`${key}#`));
     if (parsed.kind === "amazon") return addManualOrder(shipments.shipments, parsed.id, now());
     const shipment = manualDhlShipment(parsed.id, now());
     // A number an Amazon Shipment already carries joins that Shipment.

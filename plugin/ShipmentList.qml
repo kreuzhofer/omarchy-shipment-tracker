@@ -1,5 +1,6 @@
 // The list page of the popup (layout from the #9 prototype, variant A):
-// header with refresh, one row per Shipment, footer with the manual-add field.
+// header with the 7 / 30 days switch and refresh, one row per Shipment,
+// footer with the manual-add field.
 // Row: Status glyph | title + Delayed tag | Estimate; muted line Status ·
 // Direction · Source · age. Ready for pickup and Problem rows get a rail;
 // Ready for pickup also a tint and the accent Estimate; Terminal rows are dimmed.
@@ -21,14 +22,16 @@ Column {
   signal closeRequested()
   spacing: Style.space(8)
 
+  function scrollToEnd() { list.positionViewAtEnd() }
+
   // ---- Header
   Item {
     width: parent.width
-    height: Math.max(titleColumn.implicitHeight, refreshButton.implicitHeight)
+    height: Math.max(titleColumn.implicitHeight, headerButtons.implicitHeight)
     Column {
       id: titleColumn
       anchors.left: parent.left
-      anchors.right: refreshButton.left
+      anchors.right: headerButtons.left
       anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
       Text { text: "Shipments"; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.heading; font.bold: true }
@@ -41,14 +44,21 @@ Column {
         color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.caption
       }
     }
-    PanelActionButton {
-      id: refreshButton
+    Row {
+      id: headerButtons
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      iconText: "\u{F0450}"
-      tooltipText: "Refresh now"
-      foreground: root.fg
-      onClicked: root.store.refresh()
+      spacing: Style.space(4)
+      Button { text: "7 days"; selected: root.store && root.store.days === 7; fontSize: Style.font.bodySmall; onClicked: root.store.setDays(7) }
+      Button { text: "30 days"; selected: root.store && root.store.days === 30; fontSize: Style.font.bodySmall; onClicked: root.store.setDays(30) }
+      PanelActionButton {
+        id: refreshButton
+        anchors.verticalCenter: parent.verticalCenter
+        iconText: "\u{F0450}"
+        tooltipText: "Refresh now"
+        foreground: root.fg
+        onClicked: root.store.refresh()
+      }
     }
   }
 
@@ -59,7 +69,7 @@ Column {
     height: Math.min(count, 5) * root.rowHeight
     clip: true
     boundsBehavior: Flickable.StopAtBounds
-    model: root.store ? root.store.shipments : []
+    model: root.store ? root.store.recentShipments : []
 
     delegate: Rectangle {
       id: row
@@ -168,7 +178,7 @@ Column {
     }
   }
 
-  // ---- Empty state
+  // ---- Empty state: first run, or nothing in the 7 / 30 days window.
   Column {
     visible: list.count === 0
     width: parent.width
@@ -178,10 +188,17 @@ Column {
     Text { anchors.horizontalCenter: parent.horizontalCenter; text: "\u{F03D7}"; color: Qt.darker(root.fg, 1.8); font.family: root.ff; font.pixelSize: Style.font.display }
     Text {
       anchors.horizontalCenter: parent.horizontalCenter
-      text: "No Shipments yet"
+      text: !root.store || root.store.nothingTracked ? "No Shipments yet" : "No Shipments in the last " + root.store.days + " days"
       color: Qt.darker(root.fg, 1.3); font.family: root.ff; font.pixelSize: Style.font.body
     }
+    Button {
+      anchors.horizontalCenter: parent.horizontalCenter
+      visible: root.store && !root.store.nothingTracked && root.store.days === 7
+      text: "Show 30 days"; bordered: true; fontSize: Style.font.bodySmall
+      onClicked: root.store.setDays(30)
+    }
     Text {
+      visible: !root.store || root.store.nothingTracked
       width: parent.width - Style.space(40)
       anchors.horizontalCenter: parent.horizontalCenter
       horizontalAlignment: Text.AlignHCenter

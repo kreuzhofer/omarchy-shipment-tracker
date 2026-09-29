@@ -5,6 +5,7 @@
 // stops the run at once; nothing is ever submitted or clicked.
 import { classifyPage, HISTORY_URL, inferCarrier, orderSearchUrl, parseHistory, parseTracker } from "./pages.mjs";
 import { amazonStatus, parseEstimate } from "./status.mjs";
+import { isDropped } from "../retention.mjs";
 import { TERMINAL } from "../shipments.mjs";
 
 export const MAX_TRACKER_PAGES = 6;
@@ -25,7 +26,10 @@ const gap = (sleep) => sleep(Math.round(between(4000, 12000)));
 // the history is owned at no cost; any other is searched for with the
 // history's own order search, one page each, which counts against the cap.
 // `owned` and `notOwned` list what was found out.
-export async function readAccount(tab, { known, sleep, now, timeZone, historyLoaded = false, lookFor = [] }) {
+//
+// `dropped` holds the keys retention dropped; their tracker pages are never
+// read again (see retention.mjs).
+export async function readAccount(tab, { known, sleep, now, timeZone, historyLoaded = false, lookFor = [], dropped = new Set() }) {
   const result = { reason: null, readings: [], pages: 0, unmapped: 0, owned: [], notOwned: [] };
   if (!historyLoaded) {
     result.pages++;
@@ -64,7 +68,7 @@ export async function readAccount(tab, { known, sleep, now, timeZone, historyLoa
     }
   }
 
-  const targets = trackerPagesToRead(listed, known, budget);
+  const targets = trackerPagesToRead(listed.filter((s) => !isDropped(dropped, shipmentKey(s))), known, budget);
   for (const target of targets) {
     await gap(sleep);
     result.pages++;

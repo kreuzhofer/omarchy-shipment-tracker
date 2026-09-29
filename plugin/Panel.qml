@@ -6,6 +6,8 @@
 //   omarchy-shell kreuzhofer.shipment-tracker refresh    start the refresh service
 //   omarchy-shell kreuzhofer.shipment-tracker add <n>    same as the footer add field
 //   omarchy-shell kreuzhofer.shipment-tracker remove <k> same as a row's remove button
+//   omarchy-shell kreuzhofer.shipment-tracker days 7|30  the header's 7 / 30 days switch
+//   omarchy-shell kreuzhofer.shipment-tracker scroll     scroll the list to its end
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -45,6 +47,8 @@ Panel {
     function refresh(): void { backend.refresh() }
     function add(text: string): void { backend.add(text) }
     function remove(key: string): void { backend.remove(key) }
+    function days(n: int): void { backend.setDays(n) }
+    function scroll(): void { list.scrollToEnd() }
   }
 
   KeyboardPanel {
