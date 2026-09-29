@@ -6,7 +6,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { connectionRecord, recordFailure, recordOk } from "../health.mjs";
 import { nextAmazonPort } from "../ports.mjs";
-import { applyReading } from "../shipments.mjs";
+import { absorbDhlTwin, applyAmazonReading } from "../merge.mjs";
 import { readState, updateState } from "../state.mjs";
 import { openAccountBrowser, profileDirFor } from "./browser.mjs";
 import { orderDetailsUrl } from "./pages.mjs";
@@ -164,7 +164,9 @@ function upsert(list, reading, conn, key, now) {
   if (!s.connections.includes(key)) s.connections.push(key);
   if (reading.carrier) s.carrier = reading.carrier;
   if (reading.trackingNumber) s.trackingNumber = reading.trackingNumber;
-  applyReading(s, reading, now);
+  // One Shipment per parcel: a DHL Shipment with this tracking number joins it.
+  absorbDhlTwin(list, s);
+  applyAmazonReading(s, reading, now);
 }
 
 // `login amazon:<label>`: opens the account's profile visibly on amazon.de;

@@ -31,7 +31,11 @@ Item {
     var gone = {}
     pendingRemovals.concat(removedKeys).forEach(function(k) { gone[k] = true })
     var rows = (shipmentsState.shipments || []).filter(function(s) { return !gone[s.key] })
-    rows.forEach(function(s) { known[s.key] = true })
+    // A merged Amazon Shipment (#27) also stands for its DHL tracking number.
+    rows.forEach(function(s) {
+      known[s.key] = true
+      if (s.trackingNumber) known["dhl:" + s.trackingNumber] = true
+    })
     var queued = queuedAdds.filter(function(p) { return !known["dhl:" + p.id] }).map(function(p) {
       return { key: "queued:" + p.id, direction: "Incoming", source: "DHL", account: null, carrier: "DHL",
         title: p.id, status: "Unknown", estimate: { text: "Looking up…" }, delayed: false,

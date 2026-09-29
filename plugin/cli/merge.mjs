@@ -1,0 +1,69 @@
+// One Shipment per parcel (spec #21, "Merge and Carrier"). An Amazon Shipment
+// whose tracking number equals a DHL Shipment's is one Shipment: Source Amazon
+// (its key, title, account and Order link), Carrier DHL, and DHL's Status,
+// Estimate and Delayed, since DHL is the more detailed Source. The match key is
+// the tracking number.
+//
+// `detail: "DHL"` marks an Amazon Shipment whose Status and Estimate now come
+// from DHL; Amazon readings then only refresh its title. A DHL answer without
+// tracking information (Unknown) doesn't take over: Amazon's own reading says
+// more.
+import { applyReading } from "./shipments.mjs";
+
+// The Shipment that holds this tracking number: the Amazon one when it is
+// merged, else the DHL one keyed on the number.
+export function findByTrackingNumber(list, trackingNumber) {
+  return list.find((s) => s.source === "Amazon" && s.trackingNumber === trackingNumber)
+    ?? list.find((s) => s.key === `dhl:${trackingNumber}`);
+}
+
+// Amazon Shipments whose Carrier is DHL get DHL's detail, from the Sendungsliste
+// or the anonymous lookup.
+export const carriedByDhl = (s) => s.source === "Amazon" && s.carrier === "DHL" && Boolean(s.trackingNumber);
+
+// Applies what DHL says (see dhl/status.mjs) to a DHL or merged Shipment.
+export function applyDhlReading(shipment, reading, now) {
+  if (shipment.source !== "Amazon") return applyReading(shipment, reading, now);
+  if (shipment.detail !== "DHL") {
+    if (reading.status === "Unknown") return;
+    takeOver(shipment);
+  }
+  // The item's title from the Order beats DHL's sender name.
+  applyReading(shipment, { ...reading, title: null }, now);
+}
+
+// Applies an Amazon tracker reading: all of it, or only the title once DHL
+// provides the detail.
+export function applyAmazonReading(shipment, reading, now) {
+  if (shipment.detail !== "DHL") return applyReading(shipment, reading, now);
+  if (reading.title) shipment.title = reading.title;
+  shipment.lastSeenAt = now.toISOString();
+}
+
+// Folds the DHL Shipment with the same tracking number into this Amazon
+// Shipment, if there is one: the Connections that know it and, when DHL knows
+// the number, DHL's detail. Returns whether it merged.
+export function absorbDhlTwin(list, amazon) {
+  if (!amazon.trackingNumber) return false;
+  const i = list.findIndex((s) => s !== amazon && s.key === `dhl:${amazon.trackingNumber}`);
+  if (i < 0) return false;
+  const [dhl] = list.splice(i, 1);
+  for (const c of dhl.connections) if (!amazon.connections.includes(c)) amazon.connections.push(c);
+  if (dhl.discoveredAt < amazon.discoveredAt) amazon.discoveredAt = dhl.discoveredAt;
+  if (dhl.status !== "Unknown" && dhl.lastSeenAt) {
+    takeOver(amazon);
+    for (const field of ["status", "estimate", "delayed", "lastWindowTo", "terminalAt", "changedAt", "direction"]) {
+      if (dhl[field] === undefined) delete amazon[field];
+      else amazon[field] = dhl[field];
+    }
+  }
+  return true;
+}
+
+// From now on DHL's readings set Status, Estimate and Delayed; Amazon's
+// earlier promise doesn't count towards Delayed.
+function takeOver(shipment) {
+  shipment.detail = "DHL";
+  shipment.delayed = false;
+  delete shipment.lastWindowTo;
+}
