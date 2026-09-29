@@ -28,6 +28,14 @@ _Avoid_: Provider, origin
 The company physically moving the Shipment. May differ from the Source, e.g. an Amazon Shipment carried by DHL.
 _Avoid_: Provider, courier
 
+**Connection**:
+One signed-in link the tracker reads Shipments through: the DHL account, one Amazon account, or the Microsoft 365 mailbox. A Source can have several Connections (Amazon with two accounts), and the mailbox is a Connection that feeds the Amazon Source. The Sources page lists Connections.
+_Avoid_: Integration, login, account (on its own)
+
+**Health**:
+How a Connection is doing. Exactly one of: **Not set up**, **OK**, **Needs login** (the user must sign in or pass a check, e.g. an expired session, a captcha, or DHL's suspicious empty list), or **Source down** (it can't be read and the user can't fix it, e.g. an outage or a changed data format). A Login in progress is not a Health.
+_Avoid_: Status (reserved for Shipments), error, state
+
 ### Progress
 
 **Status**:
