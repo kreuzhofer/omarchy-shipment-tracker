@@ -1,8 +1,9 @@
 // The `shipment-tracker` CLI. The bin script wires real dependencies; tests
 // call main() with a temp state dir, a fixed clock and fake transports.
 //
-// deps: { env, now: () => Date, transport: { fetch }, log(line), out(line), exec? }
+// deps: { env, now: () => Date, transport: { fetch }, browser: { catchRedirect }, log(line), out(line), exec? }
 // Logs carry counts and Health only, never tracking numbers, names or addresses.
+import { login } from "./login.mjs";
 import { refresh } from "./refresh.mjs";
 import { manualDhlShipment, parseManualId, removeManual } from "./shipments.mjs";
 import { stateDirFor, updateState } from "./state.mjs";
@@ -11,7 +12,9 @@ import { install, uninstall } from "./systemd.mjs";
 const USAGE = `usage: shipment-tracker <command>
   add <trackingNumber>   track a DHL tracking number by hand
   remove <shipmentKey>   stop tracking a Shipment added by hand
-  refresh                one refresh run
+  login dhl              log in to dhl.de in a dedicated Chrome window, then sync
+  refresh [--source <key>]
+                         one refresh run (all Connections, or one)
   install                install the hourly refresh timer (idempotent)
   uninstall              remove the refresh timer and service`;
 
@@ -23,8 +26,16 @@ export async function main(argv, deps) {
       return add(args, stateDir, deps);
     case "remove":
       return remove(args, stateDir, deps);
-    case "refresh":
-      return refresh({ stateDir, now: deps.now, transport: deps.transport, log: deps.log });
+    case "login":
+      return login(args, stateDir, deps);
+    case "refresh": {
+      const source = refreshSource(args);
+      if (source === undefined) {
+        deps.log("usage: shipment-tracker refresh [--source <key>]");
+        return 2;
+      }
+      return refresh({ stateDir, now: deps.now, transport: deps.transport, log: deps.log, source });
+    }
     case "install":
       return install(deps);
     case "uninstall":
@@ -71,4 +82,11 @@ async function remove(args, stateDir, { log, out }) {
   }
   out("Removed 1 Shipment");
   return 0;
+}
+
+// [] → null (every Connection); ["--source", key] → key; anything else → undefined.
+function refreshSource(args) {
+  if (args.length === 0) return null;
+  if (args.length === 2 && args[0] === "--source" && args[1]) return args[1];
+  return undefined;
 }

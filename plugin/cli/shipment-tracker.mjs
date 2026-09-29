@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Entry point: `shipment-tracker <command>`. See main.mjs.
 import { execFile } from "node:child_process";
+import { chromeBrowser } from "./chrome.mjs";
 import { main } from "./main.mjs";
 import { httpTransport } from "./transport.mjs";
 
@@ -12,6 +13,7 @@ const code = await main(process.argv.slice(2), {
   env: process.env,
   now: () => new Date(),
   transport: httpTransport,
+  browser: chromeBrowser,
   log: (line) => console.error(line),
   out: (line) => console.log(line),
   exec,
