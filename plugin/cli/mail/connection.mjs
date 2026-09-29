@@ -1,13 +1,17 @@
 // The `mail` Connection: the user's Microsoft 365 mailbox, an optional,
-// best-effort input to the Amazon Source (spec #21, "Microsoft 365 mail").
+// best-effort input (spec #21, "Microsoft 365 mail"; revised by #59). Mail
+// discovers and enriches; it never decides a Status (see orders.mjs).
 //
-// Per run: one search for amazon.de mail, the 30-day window applied here
-// ($search can't be combined with $filter). Each Order a mail names becomes
-// an Order-level Shipment `amazon:<orderId>` (account unknown, no Carrier),
-// unless an Amazon account's history already shows that Order: then the
-// browser route's package Shipments stand for it. Once an account's history
-// shows an Order that mail found first, its Order-level Shipment merges into
-// the package Shipments (absorbMailOrders, called by the Amazon run).
+// Per run, two searches, each window applied here ($search can't be combined
+// with $filter):
+// - amazon.de mail of the last 30 days: each Order it names is kept as an
+//   Order-level row with the last mail's hint, until an Amazon account reads
+//   the Order (orders.mjs, amazon/manual.mjs);
+// - mail mentioning DHL, of the last 14 days, from any sender: each DHL number
+//   not tracked yet becomes a watched Shipment (numbers.mjs). What was shipped
+//   comes from that mail (item.mjs), read as HTML in a second, short server
+//   session when there is something new; that session failing only costs the
+//   item info.
 //
 // A mailbox that can't be read only changes this Connection's Health; it
 // never stops the other Sources. Health follows health.mjs: Softeria finding
@@ -18,16 +22,23 @@ import { markKnown, recordEvents } from "../events.mjs";
 import { clearUpdatedDismissals } from "../dismiss.mjs";
 import { recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { runLogin } from "../logins.mjs";
-import { orderDetailsUrl } from "../amazon/pages.mjs";
-import { droppedKeys } from "../retention.mjs";
-import { applyReading, TERMINAL } from "../shipments.mjs";
+import { findByTrackingNumber } from "../merge.mjs";
+import { droppedKeys, isDropped } from "../retention.mjs";
 import { readState, updateState } from "../state.mjs";
+import { itemInfo } from "./item.mjs";
 import { lastAuthDetail, openServer, removeFiles, tightenFiles } from "./mcp.mjs";
+import { findNumbers } from "./numbers.mjs";
+import { addMailNumbers, applyMailOrders, KEY, settleMailOrders } from "./orders.mjs";
 import { readMails } from "./status.mjs";
 
-export const KEY = "mail";
-const WINDOW_DAYS = 30;
-const SEARCH = { search: '"from:amazon.de"', select: ["id", "receivedDateTime", "from", "subject", "body"], top: 100 };
+export { absorbMailOrders, KEY } from "./orders.mjs";
+const SELECT = ["id", "receivedDateTime", "from", "subject", "body"];
+const AMAZON_SEARCH = { search: '"from:amazon.de"', select: SELECT, top: 100 };
+const AMAZON_WINDOW_DAYS = 30;
+const DHL_SEARCH = { search: '"DHL"', select: SELECT, top: 50 };
+const DHL_WINDOW_DAYS = 14;
+// HTML bodies fetched per run for the item ladder; more new numbers wait.
+const MAX_ITEM_MAILS = 5;
 const POLL_MS = 5000;
 
 // Why a tool call failed, from its answer (and, for a failed silent token
@@ -45,11 +56,22 @@ const MESSAGES = {
   server: "Microsoft 365 mail can't be read: the mail server didn't start",
 };
 
-const isOrderLevel = (s, orderId) => s.source === "Amazon" && s.key === `amazon:${orderId}`;
-const packagesOf = (list, orderId) => list.filter((s) => s.source === "Amazon" && s.orderId === orderId && !isOrderLevel(s, orderId));
+const daysBefore = (now, days) => new Date(now.getTime() - days * 864e5);
 
-// Reads the mailbox: { ok: true, readings, ignored } or { ok: false, reason }.
-async function readMailbox({ stateDir, mcp, now, timeZone }) {
+// One search: { messages } or { reason }.
+async function search(server, stateDir, args) {
+  const answer = await server.tool("list-mail-messages", args);
+  if (answer.isError) {
+    const detail = /Silent token acquisition failed/.test(answer.text) ? await lastAuthDetail(stateDir) : "";
+    return { reason: failure(`${detail} ${answer.text}`) };
+  }
+  const messages = answer.json?.value;
+  return Array.isArray(messages) ? { messages } : { reason: "shape" };
+}
+
+// Reads the mailbox: { ok: true, orders, numbers, ignored } or { ok: false, reason }.
+// `known(trackingNumber)`: already tracked, so no item info is needed.
+async function readMailbox({ stateDir, mcp, now, timeZone, known }) {
   let server;
   try {
     server = await openServer(mcp, stateDir);
@@ -58,32 +80,60 @@ async function readMailbox({ stateDir, mcp, now, timeZone }) {
     if (e.code === "server") return { ok: false, reason: "server" };
     throw e;
   }
-  let answer;
+  let amazon;
+  let dhl;
   try {
-    answer = await server.tool("list-mail-messages", SEARCH);
+    amazon = await search(server, stateDir, AMAZON_SEARCH);
+    if (!amazon.reason) dhl = await search(server, stateDir, DHL_SEARCH);
   } catch (e) {
     if (e.code !== "server") throw e;
     return { ok: false, reason: "server" };
   } finally {
     await server.close().catch(() => {});
   }
-  if (answer.isError) {
-    const detail = /Silent token acquisition failed/.test(answer.text) ? await lastAuthDetail(stateDir) : "";
-    return { ok: false, reason: failure(`${detail} ${answer.text}`) };
+  const reason = amazon.reason ?? dhl.reason;
+  if (reason) return { ok: false, reason };
+  const numbers = findNumbers(dhl.messages, daysBefore(now(), DHL_WINDOW_DAYS)).filter((n) => !known(n.trackingNumber));
+  await addItemInfo(numbers, { stateDir, mcp });
+  return { ok: true, ...readMails(amazon.messages, daysBefore(now(), AMAZON_WINDOW_DAYS), timeZone), numbers };
+}
+
+// The item ladder for each new number, on the mail's HTML body when it can be
+// fetched (Softeria's list gives text bodies), else on its subject.
+async function addItemInfo(numbers, { stateDir, mcp }) {
+  const ids = [...new Set(numbers.map((n) => n.message.id).filter(Boolean))].slice(0, MAX_ITEM_MAILS);
+  const html = new Map();
+  if (ids.length > 0) {
+    let server = null;
+    try {
+      server = await openServer(mcp, stateDir, { html: true });
+      for (const id of ids) {
+        const answer = await server.tool("get-mail-message", { "message-id": id, select: ["id", "body"] });
+        const body = answer.json?.body;
+        if (!answer.isError && body?.contentType === "html" && typeof body.content === "string") html.set(id, body.content);
+      }
+    } catch (e) {
+      if (e.code !== "server" && e.code !== "network") throw e;
+    } finally {
+      await server?.close().catch(() => {});
+    }
   }
-  const messages = answer.json?.value;
-  if (!Array.isArray(messages)) return { ok: false, reason: "shape" };
-  const since = new Date(now().getTime() - WINDOW_DAYS * 864e5);
-  return { ok: true, ...readMails(messages, since, timeZone) };
+  for (const n of numbers) {
+    n.item = itemInfo(n.message, n.trackingNumber, html.get(n.message.id) ?? null);
+    delete n.message;
+  }
 }
 
 // Part of `refresh`, between DHL and Amazon. Not read: not set up, or a Login
 // of it is running (except the Login's own first sync).
 export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, finishRun, firstSync = false }) {
-  const conn = (await readState(stateDir)).sources.connections?.[KEY];
+  const { sources, shipments } = await readState(stateDir);
+  const conn = sources.connections?.[KEY];
   if (!mcp || !conn) return;
   if (!firstSync && (conn.health === "not-set-up" || conn.login)) return;
-  const outcome = await readMailbox({ stateDir, mcp, now, timeZone });
+  const dropped = droppedKeys(shipments);
+  const known = (n) => isDropped(dropped, `dhl:${n}`) || Boolean(findByTrackingNumber(shipments.shipments, n));
+  const outcome = await readMailbox({ stateDir, mcp, now, timeZone, known });
   if (outcome.ok) counts.synced++;
   else {
     counts.failed++;
@@ -92,97 +142,39 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
   // Offline is not an error: a network failure counts once something else
   // in the run got through (else refresh.mjs counts it at the end, if so).
   const countNetwork = firstSync || counts.lookedUp > 0 || counts.synced > 0;
-  await updateState(stateDir, ({ shipments, sources }) => {
+  const added = await updateState(stateDir, ({ shipments, sources }) => {
     const c = sources.connections?.[KEY];
     const at = now();
     // Disconnected while the run was in flight.
-    if (!c || (c.health === "not-set-up" && !firstSync)) return;
+    if (!c || (c.health === "not-set-up" && !firstSync)) return 0;
     if (firstSync) markKnown(shipments);
     // A Login that got through has proven the mailbox, even if its first
     // sync then fails.
     if (firstSync && c.health !== "ok") {
       Object.assign(c, { health: "ok", reason: null, message: null, since: at.toISOString() });
     }
+    let count = 0;
     if (!outcome.ok) {
       recordFailure(c, at, outcome.reason, { message: MESSAGES[outcome.reason] ?? null, countNetwork });
     } else {
-      applyReadings(shipments, outcome.readings, at);
+      const dropped = droppedKeys(shipments);
+      applyMailOrders(shipments, outcome.orders, dropped, at, timeZone);
+      count = addMailNumbers(shipments, outcome.numbers, dropped, at);
       recordOk(c, at, shipments.shipments.filter((s) => s.connections.includes(KEY)).length);
     }
+    settleMailOrders(shipments, at, timeZone);
     finishRun(sources, at);
     if (firstSync) {
       clearUpdatedDismissals(shipments);
       recordEvents(shipments, { firstSync: new Set([KEY]) });
       recordConnectionEvents(shipments, sources);
     }
+    return count;
   });
   log(outcome.ok
-    ? `refresh: mail ok, ${outcome.readings.length} Order(s)${outcome.ignored ? `, ${outcome.ignored} mail(s) ignored` : ""}`
+    ? `refresh: mail ok, ${outcome.orders.length} Order(s), ${added} new DHL number(s)${outcome.ignored ? `, ${outcome.ignored} mail(s) ignored` : ""}`
     : `refresh: mail failed (${outcome.reason})`);
   return { ...outcome, counted: countNetwork };
-}
-
-function applyReadings(shipments, readings, now) {
-  const list = shipments.shipments;
-  const dropped = droppedKeys(shipments);
-  const at = now.toISOString();
-  for (const reading of readings) {
-    const key = `amazon:${reading.orderId}`;
-    if (dropped.has(key) || [...dropped].some((d) => d.startsWith(`${key}#`))) continue;
-    // The browser route already reads this Order's Shipments.
-    if (packagesOf(list, reading.orderId).length > 0) continue;
-    let s = list.find((x) => x.key === key);
-    if (!s) {
-      s = {
-        key,
-        direction: "Incoming",
-        source: "Amazon",
-        account: null,
-        carrier: null,
-        connections: [],
-        title: reading.title || reading.orderId,
-        status: "Unknown",
-        estimate: null,
-        delayed: false,
-        orderId: reading.orderId,
-        url: orderDetailsUrl(reading.orderId),
-        changedAt: at,
-        discoveredAt: at,
-        lastSeenAt: null,
-      };
-      list.push(s);
-    }
-    if (!s.connections.includes(KEY)) s.connections.push(KEY);
-    // Terminal Shipments never change again.
-    if (TERMINAL.has(s.status)) {
-      s.lastSeenAt = at;
-      continue;
-    }
-    applyReading(s, reading, now);
-  }
-}
-
-// Called by the Amazon run after its readings are in (under the state lock):
-// an Order-level Shipment that mail found merges into the package Shipments
-// the account's history now shows. They take over what it already told the
-// user (no second "new"), its discovery date and a dismissal; a manual add of
-// the same Order is left to the Amazon route's ownership rules.
-export function absorbMailOrders(list, orderIds) {
-  for (const orderId of new Set(orderIds)) {
-    const order = list.find((s) => isOrderLevel(s, orderId) && s.connections.includes(KEY));
-    const packages = packagesOf(list, orderId);
-    if (!order || packages.length === 0) continue;
-    for (const p of packages) {
-      if (!p.notified && order.notified) p.notified = order.notified;
-      if (order.discoveredAt < p.discoveredAt) p.discoveredAt = order.discoveredAt;
-      if (order.dismissedAt && !p.dismissedAt) {
-        p.dismissedAt = order.dismissedAt;
-        p.dismissedAs = order.dismissedAs;
-      }
-    }
-    order.connections = order.connections.filter((c) => c !== KEY);
-    if (order.connections.length === 0) list.splice(list.indexOf(order), 1);
-  }
 }
 
 const LOGIN_MESSAGES = {

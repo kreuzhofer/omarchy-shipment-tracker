@@ -1,21 +1,21 @@
-// amazon.de mail → Order-level readings (spec #21, "Microsoft 365 mail"; the
-// senders were confirmed live on #8). The sender decides the Status, as data;
-// senders not in the table (payments, digital orders, promotions) and every
-// DHL mail are ignored. Bodies give the Order ID and an estimate phrase, but
-// no Carrier and no tracking number. Only what a reading needs is kept:
-// nothing of a body is stored.
-import { dayLabel } from "../estimate.mjs";
+// amazon.de mail → what mail knows about each Order (spec #21, "Microsoft 365
+// mail"; the senders were confirmed live on #8). Mail never decides a Status
+// (#59): the sender only names the step the last mail reported ("Shipped"),
+// which the row shows as a hint. Senders not in the table (payments, digital
+// orders, promotions) are ignored. Bodies give the Order ID and an estimate
+// phrase, but no Carrier and no tracking number. Only what the hint needs is
+// kept: nothing of a body is stored.
 import { localDate, parseEstimate } from "../amazon/status.mjs";
 
 const DOMAIN = "amazon.de";
 
-// The sender's local part → Status. `rank` breaks ties between mails with
-// the same timestamp: the further one wins.
+// The sender's local part → the step the mail reports, as the hint words it.
+// `rank` breaks ties between mails with the same timestamp: the further one wins.
 export const SENDER_RULES = [
-  { sender: "bestellbestaetigung", status: "Announced", rank: 0 },
-  { sender: "versandbestaetigung", status: "In transit", rank: 1 },
-  { sender: "shipment-tracking", status: "Out for delivery", rank: 2 },
-  { sender: "order-update", status: "Delivered", rank: 3 },
+  { sender: "bestellbestaetigung", step: "Ordered", rank: 0 },
+  { sender: "versandbestaetigung", step: "Shipped", rank: 1 },
+  { sender: "shipment-tracking", step: "Out for delivery", rank: 2 },
+  { sender: "order-update", step: "Delivered", rank: 3 },
 ];
 
 const ORDER_ID = /\b\d{3}-\d{7}-\d{7}\b/g;
@@ -67,9 +67,9 @@ function readEstimate(phrase, received, timeZone) {
 }
 
 // Graph messages (id, receivedDateTime, from, subject, body) received since
-// `since` → { readings, ignored }. One reading per Order ID: the latest mail
-// about it decides its Status; its title and estimate come from the latest
-// mail that has one.
+// `since` → { orders, ignored }. One entry per Order ID: the latest mail about
+// it gives the step and the date (`at`); its title and estimate (days only)
+// come from the latest mail that has one. A delivered Order has no estimate.
 export function readMails(messages, since, timeZone) {
   const byOrder = new Map();
   let ignored = 0;
@@ -86,17 +86,19 @@ export function readMails(messages, since, timeZone) {
     const mail = { at: received, rule, title: subjectTitle(m.subject), estimate: readEstimate(estimatePhrase(body), new Date(received), timeZone) };
     for (const id of ids) byOrder.set(id, [...(byOrder.get(id) ?? []), mail]);
   }
-  const readings = [...byOrder].map(([orderId, mails]) => {
+  const orders = [...byOrder].map(([orderId, mails]) => {
     mails.sort((a, b) => (a.at - b.at) || (a.rule.rank - b.rule.rank));
     const latest = mails.at(-1);
-    const status = latest.rule.status;
+    const step = latest.rule.step;
     const title = mails.map((x) => x.title).filter(Boolean).at(-1) ?? null;
-    let estimate = mails.map((x) => x.estimate).filter(Boolean).at(-1) ?? null;
-    if (status === "Delivered") {
-      const day = localDate(new Date(latest.at), timeZone);
-      estimate = { from: day, to: day, text: `Delivered ${dayLabel(day)}` };
-    }
-    return { orderId, status, title, estimate, window: status === "Delivered" ? null : estimate?.to ?? null };
+    const estimate = mails.map((x) => x.estimate).filter((e) => e?.from).at(-1) ?? null;
+    return {
+      orderId,
+      step,
+      at: new Date(latest.at).toISOString(),
+      title,
+      estimate: step === "Delivered" || !estimate ? null : { from: estimate.from, to: estimate.to },
+    };
   });
-  return { readings, ignored };
+  return { orders, ignored };
 }

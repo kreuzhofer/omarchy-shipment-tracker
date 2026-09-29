@@ -94,11 +94,13 @@ test("the first sync after login mail announces nothing it finds", async (t) => 
   assert.equal(await world.run("login", "mail"), 0);
 
   const file = await world.shipmentsFile();
-  assert.deepEqual(file.shipments.map((s) => [s.key, s.status]), [[`amazon:${ORDER_A}`, "Announced"]]);
+  assert.deepEqual(file.shipments.map((s) => [s.key, s.status, s.hint]), [[`amazon:${ORDER_A}`, "Unknown", "Ordered · per mail, 28 Sep"]]);
   assert.deepEqual(file.events, []);
 });
 
-test("the sender decides the Status; DHL mail and other Amazon mail are ignored; the 30-day window is applied client-side", async (t) => {
+const DHL_NOTICE_NUMBER = "00340434000000000999";
+
+test("the sender names the step of the hint, never a Status; other Amazon mail is ignored; the 30-day window is applied client-side", async (t) => {
   const account = softeriaAccount({
     mails: [
       orderConfirmation({ orderId: ORDER_A, item: "Kaffeebohnen 1 kg", at: "2026-09-28T08:00:00Z" }),
@@ -112,35 +114,44 @@ test("the sender decides the Status; DHL mail and other Amazon mail are ignored;
       dhlNotice({ at: "2026-09-29T07:00:00Z" }),
     ],
   });
-  const world = await mailWorld(t, account);
+  const world = await mailWorld(t, account, { transport: fakeDhl({ [DHL_NOTICE_NUMBER]: { json: fixture("dhl/in-transit.json") } }) });
   await connectMail(world, account);
 
   assert.equal(await world.run("refresh"), 0);
 
-  // One search per run.
-  assert.deepEqual(world.mail.calls.map((c) => c.name), ["list-mail-messages"]);
-  assert.equal(account.searches.at(-1).search, '"from:amazon.de"');
+  // Two searches per run: amazon.de mail, and mail that mentions DHL; then
+  // the HTML of the mail that named a new DHL number.
+  assert.deepEqual(world.mail.calls.map((c) => c.name), ["list-mail-messages", "list-mail-messages", "get-mail-message"]);
+  assert.deepEqual(account.searches.map((s) => s.search), ['"from:amazon.de"', '"DHL"']);
   const file = await world.shipmentsFile();
   const byKey = Object.fromEntries(file.shipments.map((s) => [s.key, s]));
-  assert.deepEqual(Object.keys(byKey).sort(), [`amazon:${ORDER_A}`, `amazon:${ORDER_B}`, `amazon:${ORDER_C}`, `amazon:${ORDER_D}`]);
-  assert.equal(byKey[`amazon:${ORDER_A}`].status, "Announced");
-  assert.equal(byKey[`amazon:${ORDER_B}`].status, "In transit");
-  assert.equal(byKey[`amazon:${ORDER_C}`].status, "Out for delivery");
-  assert.equal(byKey[`amazon:${ORDER_D}`].status, "Delivered");
-  // Order level: Source Amazon, no account, no Carrier, the Order's page.
+  assert.deepEqual(Object.keys(byKey).sort(), [
+    `amazon:${ORDER_A}`, `amazon:${ORDER_B}`, `amazon:${ORDER_C}`, `amazon:${ORDER_D}`, `dhl:${DHL_NOTICE_NUMBER}`,
+  ]);
+  assert.deepEqual([ORDER_A, ORDER_B, ORDER_C, ORDER_D].map((id) => [byKey[`amazon:${id}`].status, byKey[`amazon:${id}`].hint]), [
+    ["Unknown", "Ordered · per mail, 28 Sep"],
+    ["Unknown", "Shipped · per mail, 28 Sep"],
+    ["Unknown", "Out for delivery · per mail, 29 Sep"],
+    ["Unknown", "Delivered · per mail, 28 Sep"],
+  ]);
+  // Order level: Source Amazon, no account, no Carrier, the Order's page;
+  // what the last mail said, and an Estimate as a day.
   assert.deepEqual(byKey[`amazon:${ORDER_B}`], {
     key: `amazon:${ORDER_B}`, direction: "Incoming", source: "Amazon", account: null, carrier: null, connections: ["mail"],
-    title: "Gartenschlauch 20 m", status: "In transit",
-    estimate: { from: "2026-09-29", to: "2026-09-29", text: "Ankunft morgen" }, delayed: false,
-    orderId: ORDER_B, url: `${ORDER_PAGE}${ORDER_B}`, lastWindowTo: "2026-09-29",
+    title: "Gartenschlauch 20 m", status: "Unknown",
+    estimate: { from: "2026-09-29", to: "2026-09-29", text: "Tue 29 Sep" }, delayed: false,
+    orderId: ORDER_B, url: `${ORDER_PAGE}${ORDER_B}`, probedBy: [],
+    mail: { step: "Shipped", at: "2026-09-28T09:00:00.000Z", estimate: { from: "2026-09-29", to: "2026-09-29" } },
+    hint: "Shipped · per mail, 28 Sep", trackingEvent: "mail@2026-09-28T09:00:00.000Z",
     changedAt: "2026-09-29T10:00:00.000Z", discoveredAt: "2026-09-29T10:00:00.000Z", lastSeenAt: "2026-09-29T10:00:00.000Z",
-    notified: { status: "In transit", delayed: false },
+    notified: { status: "Unknown", delayed: false },
   });
-  assert.deepEqual(byKey[`amazon:${ORDER_D}`].estimate, { from: "2026-09-28", to: "2026-09-28", text: "Delivered Mon 28 Sep" });
-  assert.equal(byKey[`amazon:${ORDER_D}`].terminalAt, "2026-09-29T10:00:00.000Z");
-  assert.deepEqual(file.events.map((e) => e.kind), ["summary"]);
-  assert.equal(file.events[0].count, 4);
-  assert.equal((await world.sourcesFile()).connections.mail.lastCount, 4);
+  assert.equal(byKey[`amazon:${ORDER_D}`].estimate, null);
+  assert.equal(byKey[`amazon:${ORDER_D}`].terminalAt, undefined);
+  // DHL's own notice names its number: watched, Status from the lookup.
+  assert.equal(byKey[`dhl:${DHL_NOTICE_NUMBER}`].status, "In transit");
+  assert.deepEqual(file.events, []);
+  assert.equal((await world.sourcesFile()).connections.mail.lastCount, 5);
 });
 
 test("the latest mail about an Order decides it, and estimates are read on the day the mail came", async (t) => {
@@ -158,34 +169,11 @@ test("the latest mail about an Order decides it, and estimates are read on the d
   assert.equal(await world.run("refresh"), 0);
 
   const a = await world.shipment(`amazon:${ORDER_A}`);
-  assert.equal(a.status, "In transit");
+  assert.equal(a.status, "Unknown");
+  assert.equal(a.hint, "Shipped · per mail, 26 Sep");
   // Saturday's "Donnerstag" is the next Thursday.
-  assert.deepEqual(a.estimate, { from: "2026-10-01", to: "2026-10-01", text: "Ankunft Donnerstag" });
-  assert.deepEqual((await world.shipment(`amazon:${ORDER_B}`)).estimate, { from: "2026-10-06", to: "2026-10-08", text: "Lieferung 6. – 8. Oktober" });
-});
-
-test("a mail-only Shipment notifies like any other: new, later Out for delivery, and Delayed", async (t) => {
-  const item = "Kaffeebohnen 1 kg";
-  const account = softeriaAccount({ mails: [shippingConfirmation({ orderId: ORDER_A, item, at: "2026-09-29T08:00:00Z" })] });
-  const world = await mailWorld(t, account);
-  await connectMail(world, account);
-
-  await world.run("refresh");
-  assert.deepEqual((await world.shipmentsFile()).events.map((e) => [e.kind, e.title, e.body, e.url]), [
-    ["new", `New shipment: ${item}`, "Amazon · In transit · Ankunft morgen", `${ORDER_PAGE}${ORDER_A}`],
-  ]);
-
-  account.mails.push(shippingConfirmation({ orderId: ORDER_A, item, at: "2026-09-29T11:00:00Z", estimate: "Ankunft übermorgen" }));
-  world.setClock("2026-09-29T12:00:00.000Z");
-  await world.run("refresh");
-  assert.deepEqual((await world.shipmentsFile()).events.map((e) => [e.kind, e.title]), [["delayed", `Your ${item} is delayed`]]);
-
-  account.mails.push(outForDelivery({ orderId: ORDER_A, item, at: "2026-10-01T06:00:00Z" }));
-  world.setClock("2026-10-01T07:00:00.000Z");
-  await world.run("refresh");
-  const file = await world.shipmentsFile();
-  assert.deepEqual(file.events.map((e) => [e.kind, e.title, e.body]), [["status", `Your ${item} is out for delivery`, "Amazon · Ankunft heute"]]);
-  assert.equal((await world.shipment(`amazon:${ORDER_A}`)).delayed, true);
+  assert.deepEqual(a.estimate, { from: "2026-10-01", to: "2026-10-01", text: "Thu 1 Oct" });
+  assert.deepEqual((await world.shipment(`amazon:${ORDER_B}`)).estimate, { from: "2026-10-06", to: "2026-10-08", text: "Tue 6 Oct – Thu 8 Oct" });
 });
 
 // ---- Run order and the browser route
@@ -208,7 +196,11 @@ test("run order is DHL, then mail, then Amazon; a mail-only Shipment merges into
   const list = account.tools["list-mail-messages"];
   account.tools["list-mail-messages"] = (args, server) => { order.push("mail"); return list(args, server); };
   let history = historyPage([]);
-  const chrome = fakeChrome({ history: () => { order.push("amazon"); return history; }, trackers: { [`${ORDER_A}#0`]: TRACKER_A } });
+  const chrome = fakeChrome({
+    history: () => { order.push("amazon"); return history; },
+    trackers: { [`${ORDER_A}#0`]: TRACKER_A },
+    search: { [ORDER_A]: historyPage([]), [ORDER_B]: historyPage([]) },
+  });
   const dhl = fakeDhlAccount({ inbox: { json: { sendungen: [] } }, enrich: { json: { sendungen: [] } } });
   const inbox = dhl.inbox;
   Object.defineProperty(dhl, "inbox", { get: () => { order.push("dhl"); return inbox; } });
@@ -218,14 +210,16 @@ test("run order is DHL, then mail, then Amazon; a mail-only Shipment merges into
   await world.run("login", "amazon:Business");
   await connectMail(world, account);
 
-  // The history doesn't show the Orders yet: mail's Order-level Shipments stand.
+  // The history doesn't show the Orders yet (nor does the order search):
+  // mail's Order-level Shipments stand, and announce nothing.
   order.length = 0;
   await world.run("refresh");
   assert.deepEqual(order.filter((x, i) => x !== order[i - 1]), ["dhl", "mail", "amazon"]);
   assert.deepEqual(await keys(world), [`amazon:${ORDER_A}`, `amazon:${ORDER_B}`]);
-  assert.deepEqual((await world.shipmentsFile()).events.map((e) => e.kind), ["new", "new"]);
+  assert.deepEqual((await world.shipmentsFile()).events, []);
 
-  // Now it shows Order A: one Shipment for it, the account's, told about once.
+  // Now it shows Order A: one Shipment for it, the account's, and the row
+  // the user already saw becomes it without a "new".
   history = HISTORY_WITH_A;
   world.setClock("2026-09-29T11:00:00.000Z");
   await world.run("refresh");
@@ -394,7 +388,7 @@ test("Retry with --source mail reads only the mailbox", async (t) => {
   assert.equal(await world.run("refresh", "--source", "mail"), 0);
 
   assert.equal(world.transport.refreshTokens.length, dhlTokenRequests);
-  assert.equal(account.searches.length, 1);
+  assert.equal(account.searches.length, 2);
   assert.ok(await world.shipment(`amazon:${ORDER_A}`));
 });
 
@@ -480,7 +474,8 @@ test("disconnect mail logs out through Softeria, deletes its files, and drops th
       orderConfirmation({ orderId: ORDER_C, item: "Kabel & Adapter-Set", at: "2026-09-28T10:00:00Z" }),
     ],
   });
-  const chrome = fakeChrome({ history: historyPage([]), trackers: { [`${ORDER_A}#0`]: TRACKER_A } });
+  const notFound = { [ORDER_A]: historyPage([]), [ORDER_B]: historyPage([]), [ORDER_C]: historyPage([]) };
+  const chrome = fakeChrome({ history: historyPage([]), trackers: { [`${ORDER_A}#0`]: TRACKER_A }, search: notFound });
   const world = await mailWorld(t, account, { chrome });
   await world.run("accounts", "add", "Business", "--accept-risk");
   await world.run("login", "amazon:Business");

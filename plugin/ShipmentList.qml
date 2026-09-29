@@ -8,7 +8,9 @@
 // Estimate · age. Ready for pickup and Problem cards get a coloured border;
 // Terminal and Dismissed cards are dimmed. Amazon cards lead with a square
 // tile (#58, option A of #54): the item's image, cached by the CLI, or a
-// package glyph until there is one. Footer: the manual-add field.
+// package glyph until there is one; so do DHL cards whose item a mail named.
+// An Order only mail knows shows "from mail" in its badge and the last mail's
+// hint instead of a Status, over an empty bar (#59). Footer: the manual-add field.
 // A manual add offers removal on hover, every card dismissal (#35): the card
 // slides out and the cards below close the gap; "N dismissed · show" under
 // the list brings Dismissed cards back into view, dimmed, with "Show again".
@@ -299,8 +301,10 @@ Column {
       readonly property bool hot: cardMouse.containsMouse || removeHovered || dismissHovered
       // A "Looking up…" card has nothing to dismiss yet.
       readonly property bool dismissable: String(s.key).indexOf("queued:") !== 0
-      // Amazon cards (merged Amazon + DHL ones too) lead with the item tile.
-      readonly property bool tiled: s.source === "Amazon"
+      // Amazon cards (merged Amazon + DHL ones too, and Orders only mail
+      // knows) lead with the item tile, as do DHL cards whose item a mail
+      // named (#59); without an image the tile shows the package glyph.
+      readonly property bool tiled: s.source === "Amazon" || !!s.itemTitle
       readonly property int tileSize: root.cardHeight - Style.space(16)
       width: list.width
       height: root.cardHeight
@@ -461,7 +465,7 @@ Column {
             spacing: Style.space(6)
             Text {
               anchors.verticalCenter: parent.verticalCenter
-              text: Shipments.statusGlyph(card.s.status) + "  " + card.s.status
+              text: Shipments.statusLine(card.s)
               color: card.problem || card.pickup ? card.tone : root.fg
               font.family: root.ff; font.pixelSize: Style.font.bodySmall
             }

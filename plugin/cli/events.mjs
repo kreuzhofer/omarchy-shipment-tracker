@@ -28,8 +28,10 @@ const RULES = {
 // More Shipment events than this in one run become one `summary`.
 const COLLAPSE_ABOVE = 3;
 
-// Connections that aren't discovery: a manual add is never "new".
-const MANUAL = "manual";
+// Connections that aren't discovery: a manual add is never "new", and mail
+// never notifies (#59): its Amazon Orders keep Status Unknown, and a DHL
+// number it finds is watched like a manual add.
+const QUIET = new Set(["manual", "mail"]);
 
 const mark = (s) => ({ status: s.status, delayed: s.delayed === true });
 
@@ -116,7 +118,7 @@ function eventKind(s, firstSync) {
   const before = s.notified;
   if (!before) {
     const connections = s.connections ?? [];
-    const discovered = !connections.includes(MANUAL) && connections.some((c) => !firstSync.has(c));
+    const discovered = !connections.some((c) => QUIET.has(c)) && connections.some((c) => !firstSync.has(c));
     return rules.discovered && discovered ? "new" : null;
   }
   if (s.status !== before.status && rules.statuses.has(s.status)) return "status";

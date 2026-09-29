@@ -25,10 +25,10 @@ export const isDropped = (dropped, key) => dropped.has(key) || dropped.has(Strin
 
 // Whether a Connection that knows the Shipment would still return it: its
 // last successful read saw it, or it hasn't been read successfully yet. For a
-// manual add: the Carrier knows the number.
+// manual add or a DHL number found in mail: the Carrier knows the number.
 function stillReturned(s, sources) {
   return (s.connections ?? []).some((c) => {
-    if (c === "manual") return s.status !== "Unknown";
+    if (c === "manual" || (c === "mail" && s.source === "DHL")) return s.status !== "Unknown";
     const conn = sources.connections?.[c];
     if (!conn) return false;
     return !conn.lastOk || (Boolean(s.lastSeenAt) && s.lastSeenAt >= conn.lastOk);

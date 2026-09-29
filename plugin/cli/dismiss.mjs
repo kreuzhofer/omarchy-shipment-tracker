@@ -15,7 +15,7 @@
 // without a day (a Problem's text) compare by their text.
 const estimateKey = (e) => (e?.from || e?.to ? `${e.from ?? ""}/${e.to ?? ""}` : e?.text ?? null);
 
-const markOf = (s) => ({
+export const markOf = (s) => ({
   status: s.status,
   estimate: estimateKey(s.estimate),
   delayed: s.delayed === true,

@@ -4,7 +4,8 @@
 // lookups of the DHL numbers the Sendungsliste didn't list (manual adds and
 // numbers learned from Amazon), then the Microsoft 365 mailbox, then each
 // Amazon account (so an Order first seen in mail gets its tracker page in the
-// same run), then lookups of DHL numbers Amazon showed for the first time.
+// same run), then lookups of DHL numbers Amazon or mail showed for the first
+// time.
 // Each number is looked up at most once per run. `source` limits the run to
 // one Connection key ("dhl", "mail" or "amazon:<label>", for Retry); lookups
 // then wait for the next full run. A Connection that fails never stops the
@@ -45,11 +46,11 @@ import { readState, updateState } from "./state.mjs";
 
 const MAX_ROUNDS = 3;
 
-// Manual DHL adds and DHL numbers learned from Amazon are looked up
-// anonymously, one request per number per run. Terminal Shipments are never
-// re-fetched.
+// Manual DHL adds, DHL numbers found in mail and DHL numbers learned from
+// Amazon are looked up anonymously, one request per number per run. Terminal
+// Shipments are never re-fetched.
 const needsLookup = (s) => !TERMINAL.has(s.status)
-  && ((s.source === "DHL" && s.connections.includes("manual")) || carriedByDhl(s));
+  && ((s.source === "DHL" && (s.connections.includes("manual") || s.connections.includes("mail"))) || carriedByDhl(s));
 
 // `firstSync`: this run is the first sync of the `source` Connection after a
 // Login, so what it discovers is not announced as new.

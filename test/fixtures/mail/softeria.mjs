@@ -28,15 +28,21 @@ export const messageList = (value) => toolAnswer({ "@odata.context": "https://gr
 
 let nextId = 0;
 const PADDING = "͏ ‌ ­".repeat(6);
+// Each message's HTML body, for `get-mail-message` on a server started with
+// MS365_MCP_BODY_FORMAT=html (Graph's own text/HTML switch).
+const HTML = new Map();
 
 // One Graph message. `sender`: the address; `body`: the text body (Softeria
-// asks Graph for text bodies).
-export function mail({ sender, receivedDateTime, subject, body }) {
+// asks Graph for text bodies by default); `html`: the HTML body (else the
+// text wrapped in <html>).
+export function mail({ sender, name = "Amazon.de", receivedDateTime, subject, body, html = null }) {
+  const id = `AAMkSYNTHETIC${String(++nextId).padStart(4, "0")}=`;
+  HTML.set(id, html ?? `<html><body><p>${body}</p></body></html>`);
   return {
-    id: `AAMkSYNTHETIC${String(++nextId).padStart(4, "0")}=`,
+    id,
     receivedDateTime,
     subject,
-    from: { emailAddress: { name: "Amazon.de", address: sender } },
+    from: { emailAddress: { name, address: sender } },
     body: { contentType: "text", content: body },
   };
 }
@@ -85,6 +91,44 @@ export const dhlNotice = ({ at }) => mail({
   body: "Ihr Paket kommt heute zwischen 10:00 und 13:00. Sendungsnummer 00340434000000000999",
 });
 
+// ---- Mail from other senders that names a DHL number (#59). Layouts are
+// synthetic: eBay's real markup is still to be verified on a real mail.
+
+// A marketplace's "your item has shipped" mail (eBay-like): the item links
+// its listing, the number comes with the carrier's name.
+export const marketplaceShipped = ({ trackingNumber, item, at, sender = "ebay@ebay.de" }) => mail({
+  sender, name: "eBay", receivedDateTime: at, subject: `Versendet: ${item}`,
+  body: `Gute Nachrichten! Dein Artikel ist unterwegs. ${item} Versand mit DHL Sendungsnummer: ${trackingNumber} Voraussichtliche Lieferung: Do, 1. Okt`,
+  html: `<html><body><table><tr><td><img src="https://i.ebayimg.com/images/g/AAAAAAAAAAAAAAAA/s-l140.jpg" alt=""></td>`
+    + `<td><a href="https://www.ebay.de/itm/100000000001?mkevt=1">${item.replaceAll("&", "&amp;")}</a><br>Verkauft von: beispiel_verkauf</td></tr>`
+    + `<tr><td colspan="2">Versand mit DHL · Sendungsnummer: <a href="https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=${trackingNumber}">${trackingNumber}</a></td></tr></table></body></html>`,
+});
+
+// A shop's shipping confirmation with schema.org ParcelDelivery markup, and
+// a subject that names no item.
+export const shopShipped = ({ trackingNumber, item, at, schemaNumber = trackingNumber }) => mail({
+  sender: "versand@shop.example", name: "Beispiel-Shop", receivedDateTime: at, subject: "Ihre Bestellung EX-1001 wurde versandt",
+  body: `Hallo, deine Bestellung EX-1001 ist mit DHL unterwegs. Sendungsnummer ${trackingNumber}.`,
+  html: `<html><head><script type="application/ld+json">${JSON.stringify({
+    "@context": "http://schema.org", "@type": "ParcelDelivery", trackingNumber: schemaNumber,
+    carrier: { "@type": "Organization", name: "DHL" },
+    itemShipped: { "@type": "Product", name: item, image: "https://shop.example/img/1.jpg" },
+    partOfOrder: { "@type": "Order", orderNumber: "EX-1001", merchant: { "@type": "Organization", name: "Beispiel-Shop" } },
+  })}</script></head><body><p>Deine Bestellung EX-1001 ist mit DHL unterwegs. Sendungsnummer ${trackingNumber}.</p></body></html>`,
+});
+
+// A newsletter that mentions DHL and a long number that isn't a tracking number.
+export const newsletter = ({ at }) => mail({
+  sender: "news@shop.example", name: "Beispiel-Shop", receivedDateTime: at, subject: "Versandkostenfrei mit DHL",
+  body: "Nur heute: versandkostenfrei mit DHL. Gutscheincode 2026092912345 gilt bis Sonntag. Kundennummer 123456789012.",
+});
+
+// A Hermes mail: a tracking number, but not DHL's.
+export const otherCarrier = ({ at }) => mail({
+  sender: "noreply@carrier.example", name: "Paketdienst", receivedDateTime: at, subject: "Ihre Sendung ist unterwegs",
+  body: "Sendungsnummer: 12345678901234 Zustellung morgen.",
+});
+
 // A Softeria server with one mailbox. `account.mails` is what the search
 // finds (the search itself is Graph's: the fake returns them all). A Login
 // signs in after `polls` verify-login calls and, like Softeria, writes its
@@ -96,8 +140,10 @@ export function softeriaAccount({ mails = [], polls = 1 } = {}) {
     mails,
     polls,
     list: null,
+    get: null,
     verifies: 0,
     searches: [],
+    gets: [],
     tools: {
       login: () => deviceCodeRequired(),
       "verify-login": async (args, { env }) => {
@@ -114,6 +160,17 @@ export function softeriaAccount({ mails = [], polls = 1 } = {}) {
         account.searches.push(args);
         const answer = typeof account.list === "function" ? account.list(args, server) : account.list;
         return answer ?? messageList(account.mails);
+      },
+      // Graph honours the server's body format: HTML when started with
+      // MS365_MCP_BODY_FORMAT=html. `account.get(args)` may override the answer.
+      "get-mail-message": (args, { env }) => {
+        account.gets.push(args);
+        const override = account.get?.(args);
+        if (override) return override;
+        const m = account.mails.find((x) => x.id === args["message-id"]);
+        if (!m) return toolAnswer({ error: "Error in tool get-mail-message: Microsoft Graph API error: 404 Not Found - {}" }, { isError: true });
+        const body = env.MS365_MCP_BODY_FORMAT === "html" ? { contentType: "html", content: HTML.get(m.id) } : m.body;
+        return toolAnswer({ id: m.id, body });
       },
       logout: async (args, { env }) => {
         for (const file of [env.MS365_MCP_TOKEN_CACHE_PATH, env.MS365_MCP_SELECTED_ACCOUNT_PATH]) await rm(file, { force: true });

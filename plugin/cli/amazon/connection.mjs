@@ -159,7 +159,7 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     for (const reading of kept) upsert(shipments.shipments, reading, conn, key, at);
     recordImageUrls(shipments.shipments, result.images ?? []);
     // An Order mail found first is now read here: one Shipment per parcel.
-    absorbMailOrders(shipments.shipments, kept.map((r) => r.orderId));
+    absorbMailOrders(shipments.shipments);
     applyOwnership(shipments.shipments, key, conn.label, { ...result, readings: kept });
     // A Login that reached the order history has proven the session, even if
     // its first sync then fails for another reason.
