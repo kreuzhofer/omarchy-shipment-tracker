@@ -7,6 +7,7 @@
 // Logs carry counts and Health only, never tracking numbers, names or addresses.
 import { addAccount, loginAmazon, removeAccount } from "./amazon/connection.mjs";
 import { addManualOrder } from "./amazon/manual.mjs";
+import { dismiss, undismiss } from "./dismiss.mjs";
 import { login as loginDhl } from "./login.mjs";
 import { findByTrackingNumber } from "./merge.mjs";
 import { refresh } from "./refresh.mjs";
@@ -17,6 +18,9 @@ import { install, uninstall } from "./systemd.mjs";
 const USAGE = `usage: shipment-tracker <command>
   add <id>               track a DHL tracking number or an Amazon Order ID by hand
   remove <shipmentKey>   stop tracking a Shipment added by hand
+  dismiss <shipmentKey>  hide a Shipment until it gets a real update
+  undismiss <shipmentKey>
+                         show a Dismissed Shipment again
   login dhl              log in to dhl.de in a dedicated Chrome window, then sync
   login amazon:<label>   sign in to that account in its own Chrome window
   accounts add <label> --accept-risk
@@ -38,6 +42,9 @@ export async function main(argv, deps) {
       return add(args, stateDir, deps);
     case "remove":
       return remove(args, stateDir, deps);
+    case "dismiss":
+    case "undismiss":
+      return setDismissed(command, args, stateDir, deps);
     case "login":
       return login(args, run);
     case "accounts":
@@ -100,6 +107,22 @@ async function remove(args, stateDir, { log, out }) {
     return 2;
   }
   out("Removed 1 Shipment");
+  return 0;
+}
+
+async function setDismissed(command, args, stateDir, { now, log, out }) {
+  if (args.length !== 1) {
+    log(`usage: shipment-tracker ${command} <shipmentKey>`);
+    return 2;
+  }
+  const error = await updateState(stateDir, ({ shipments }) => (command === "dismiss"
+    ? dismiss(shipments, args[0], now())
+    : undismiss(shipments, args[0])));
+  if (error) {
+    log(`${command}: ${error}`);
+    return 2;
+  }
+  out(command === "dismiss" ? "Dismissed 1 Shipment" : "Undismissed 1 Shipment");
   return 0;
 }
 

@@ -4,7 +4,9 @@
 // Row: Status glyph | title + Delayed tag | Estimate; muted line Status ·
 // Direction · Source · age. Ready for pickup and Problem rows get a rail;
 // Ready for pickup also a tint and the accent Estimate; Terminal rows are dimmed.
-// A manual add offers removal on hover.
+// A manual add offers removal on hover, every row dismissal (#35): the row
+// slides out and the rows below close the gap; "N dismissed · show" under the
+// list brings Dismissed rows back into view, dimmed, with an undismiss button.
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -122,32 +124,98 @@ Column {
     }
   }
 
+  // The rows as a ListModel kept in step with store.recentShipments by key,
+  // so a row that leaves or arrives (dismissed, shown again, in or out of the
+  // 7 / 30 days window) is a remove or insert the ListView animates (a plain
+  // array model would rebuild every row). Each item carries the Shipment as JSON.
+  ListModel { id: rows }
+
+  function syncRows() {
+    var want = root.store ? root.store.recentShipments : []
+    var keys = {}
+    want.forEach(function(s) { keys[s.key] = true })
+    for (var i = rows.count - 1; i >= 0; i--) if (!keys[rows.get(i).key]) rows.remove(i)
+    for (var j = 0; j < want.length; j++) {
+      var payload = JSON.stringify(want[j])
+      var at = -1
+      for (var k = j; k < rows.count; k++) if (rows.get(k).key === want[j].key) { at = k; break }
+      if (at < 0) {
+        rows.insert(j, { key: want[j].key, payload: payload })
+        continue
+      }
+      if (at !== j) rows.move(at, j, 1)
+      if (rows.get(j).payload !== payload) rows.setProperty(j, "payload", payload)
+    }
+  }
+
+  Connections {
+    target: root.store
+    function onRecentShipmentsChanged() { root.syncRows() }
+  }
+  onStoreChanged: syncRows()
+  Component.onCompleted: syncRows()
+
+  readonly property int slideMs: 200
+
   // ---- The list: 5 rows visible, scrolls to more.
   ListView {
     id: list
     width: parent.width
-    height: Math.min(count, 5) * root.rowHeight
+    height: Math.min(shownCount, 5) * root.rowHeight
+    // Grows at once; shrinks only after a leaving row has slid out.
+    property int shownCount: count
+    onCountChanged: if (count >= shownCount) shownCount = count; else shrinkLater.restart()
+    Timer { id: shrinkLater; interval: root.slideMs; onTriggered: list.shownCount = list.count }
+    Behavior on height { NumberAnimation { duration: root.slideMs; easing.type: Easing.OutCubic } }
     clip: true
     boundsBehavior: Flickable.StopAtBounds
-    model: root.store ? root.store.recentShipments : []
+    model: rows
+
+    // Leaving (dismissed, removed, out of the window): slide out to the right,
+    // then the rows below move up into the gap. Arriving (an update brought a
+    // Dismissed row back, a new Shipment): slide in from the right into its
+    // urgency place.
+    remove: Transition {
+      ParallelAnimation {
+        NumberAnimation { property: "x"; to: list.width; duration: root.slideMs; easing.type: Easing.InCubic }
+        NumberAnimation { property: "opacity"; to: 0; duration: root.slideMs; easing.type: Easing.InCubic }
+      }
+    }
+    add: Transition {
+      NumberAnimation { property: "x"; from: list.width; to: 0; duration: root.slideMs; easing.type: Easing.OutCubic }
+    }
+    removeDisplaced: Transition {
+      SequentialAnimation {
+        PauseAnimation { duration: root.slideMs }
+        NumberAnimation { properties: "x,y"; duration: root.slideMs; easing.type: Easing.OutCubic }
+      }
+    }
+    displaced: Transition {
+      NumberAnimation { properties: "x,y"; duration: root.slideMs; easing.type: Easing.OutCubic }
+    }
+    move: Transition {
+      NumberAnimation { properties: "x,y"; duration: root.slideMs; easing.type: Easing.OutCubic }
+    }
 
     delegate: Rectangle {
       id: row
-      required property var modelData
-      readonly property var s: modelData
+      required property string key
+      required property string payload
+      readonly property var s: JSON.parse(payload)
       readonly property bool isTerminal: Shipments.terminal[s.status] === true
       readonly property bool pickup: s.status === "Ready for pickup"
       readonly property bool problem: s.status === "Problem"
       readonly property bool removable: (s.connections || []).length === 1 && s.connections[0] === "manual"
       property bool removeHovered: false
-      readonly property bool hot: rowMouse.containsMouse || removeHovered
+      property bool dismissHovered: false
+      readonly property bool hot: rowMouse.containsMouse || removeHovered || dismissHovered
       width: list.width
       height: root.rowHeight
       radius: Style.cornerRadius
       color: hot ? Style.hoverFillFor(root.fg, Color.accent)
         : pickup ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16)
         : "transparent"
-      opacity: isTerminal ? 0.55 : 1
+      opacity: isTerminal || s.dismissed === true ? 0.55 : 1
 
       Rectangle { // left rail marks the Shipments that need the user
         visible: row.pickup || row.problem
@@ -172,6 +240,7 @@ Column {
         anchors.leftMargin: Style.space(8)
         anchors.right: parent.right
         anchors.rightMargin: Style.space(10) + (removeButton.visible ? removeButton.width + Style.space(4) : 0)
+          + (dismissButton.visible ? dismissButton.width + Style.space(4) : 0)
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
 
@@ -234,13 +303,25 @@ Column {
           onHovered: function(isHovered) { row.removeHovered = isHovered }
           onClicked: root.store.remove(row.s.key)
         }
+        PanelActionButton {
+          id: dismissButton
+          visible: row.hot && String(row.s.key).indexOf("queued:") !== 0
+          anchors.right: removeButton.visible ? removeButton.left : parent.right
+          anchors.rightMargin: removeButton.visible ? Style.space(2) : Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
+          iconText: row.s.dismissed ? "\u{F0208}" : "\u{F0209}" // eye / eye-off
+          tooltipText: row.s.dismissed ? "Show again" : "Dismiss until it changes"
+          foreground: root.fg
+          onHovered: function(isHovered) { row.dismissHovered = isHovered }
+          onClicked: row.s.dismissed ? root.store.undismiss(row.s.key) : root.store.dismiss(row.s.key)
+        }
       }
     }
   }
 
   // ---- Empty state: first run, or nothing in the 7 / 30 days window.
   Column {
-    visible: list.count === 0
+    visible: list.count === 0 && !(root.store && root.store.dismissedCount > 0)
     width: parent.width
     spacing: Style.space(6)
     topPadding: Style.space(10)
@@ -268,12 +349,37 @@ Column {
     }
   }
 
-  Text {
+  // Under the list: "12 Shipments · scroll for more · 2 dismissed · show".
+  Item {
+    id: listNotesBox
     width: parent.width
-    horizontalAlignment: Text.AlignHCenter
-    visible: list.count > 5
-    text: list.count + " Shipments · scroll for more"
-    color: Qt.darker(root.fg, 1.6); font.family: root.ff; font.pixelSize: Style.font.caption
+    height: listNotes.implicitHeight
+    readonly property bool scrolls: list.count > 5
+    readonly property bool anyDismissed: root.store !== null && root.store.dismissedCount > 0
+    visible: scrolls || anyDismissed
+    Row {
+      id: listNotes
+      anchors.horizontalCenter: parent.horizontalCenter
+      Text {
+        id: scrollHint
+        visible: listNotesBox.scrolls
+        text: list.count + " Shipments · scroll for more" + (listNotesBox.anyDismissed ? " · " : "")
+        color: Qt.darker(root.fg, 1.6); font.family: root.ff; font.pixelSize: Style.font.caption
+      }
+      Text {
+        id: dismissedLink
+        visible: listNotesBox.anyDismissed
+        text: visible ? root.store.dismissedCount + " dismissed · " + (root.store.showDismissed ? "hide" : "show") : ""
+        color: dismissedMouse.containsMouse ? root.fg : Qt.darker(root.fg, 1.6); font.family: root.ff; font.pixelSize: Style.font.caption
+        MouseArea {
+          id: dismissedMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.store.showDismissed = !root.store.showDismissed
+        }
+      }
+    }
   }
 
   PanelSeparator { foreground: root.fg }

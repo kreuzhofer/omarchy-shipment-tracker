@@ -9,6 +9,7 @@
 // (neither success nor failure), a Login or a remove waits up to 90 s for it
 // (one account's run takes about 40 s).
 import { mkdir, rm, stat } from "node:fs/promises";
+import { clearUpdatedDismissals } from "../dismiss.mjs";
 import { markKnown, recordEvents } from "../events.mjs";
 import { connectionRecord, recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { withLock } from "../lock.mjs";
@@ -173,6 +174,7 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     finishRun(sources, at);
     // A challenge met during the Login's first sync is announced right away.
     if (firstSync) {
+      clearUpdatedDismissals(shipments);
       recordEvents(shipments, { firstSync: new Set([key]) });
       recordConnectionEvents(shipments, sources);
     }

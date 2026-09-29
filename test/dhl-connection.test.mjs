@@ -60,6 +60,7 @@ test("login dhl saves the tokens (mode 600) and its first sync shows every Shipm
     changedAt: "2026-09-29T10:00:00.000Z",
     discoveredAt: "2026-09-29T10:00:00.000Z",
     lastSeenAt: "2026-09-29T10:00:00.000Z",
+    trackingEvent: "3@2026-09-29T07:15:00+02:00",
     notified: { status: "Out for delivery", delayed: false },
   });
   assert.deepEqual(file.events, []);
