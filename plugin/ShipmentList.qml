@@ -48,7 +48,8 @@ Column {
   }
 
   readonly property var recent: root.store ? root.store.recentShipments : []
-  function countIn(t) { return root.recent.filter(function(s) { return Shipments.inTab(s, t) }).length }
+  // The tab label's count: pending Shipments only (not Terminal, not Dismissed).
+  function countIn(t) { return root.store ? Shipments.pendingCount(t, root.store.recentAll) : 0 }
   // Dismissed Shipments of this tab within the 7 / 30 days window.
   readonly property int tabDismissedCount: root.store
     ? root.store.recentAll.filter(function(s) { return s.dismissed && Shipments.inTab(s, root.tab) }).length : 0
@@ -69,7 +70,7 @@ Column {
           required property string modelData
           readonly property string dot: root.store
             ? Shipments.tabDot(modelData, root.store.activeShipments, root.store.troubled) : ""
-          text: (modelData === "Outgoing" ? "\u{F005D} " : "\u{F0045} ") + modelData + " " + root.countIn(modelData)
+          text: (modelData === "Outgoing" ? "\u{F005D} " : "\u{F0045} ") + modelData + (root.countIn(modelData) > 0 ? " " + root.countIn(modelData) : "")
           selected: root.tab === modelData
           fontSize: Style.font.body
           onClicked: root.setTab(modelData)

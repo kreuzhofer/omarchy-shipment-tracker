@@ -100,6 +100,13 @@ function inTab(s, tab) {
   return (s.direction === "Outgoing" ? "Outgoing" : "Incoming") === tab
 }
 
+// The tab label's count: the tab's pending Shipments, i.e. not Terminal and
+// not Dismissed (Unknown and mail-only rows count). `shipments` are the ones
+// in the 7 / 30 days view, Dismissed included.
+function pendingCount(tab, shipments) {
+  return shipments.filter(function(s) { return inTab(s, tab) && !terminal[s.status] && !s.dismissed }).length
+}
+
 // The tabs a troubled Connection affects: Amazon, and the mailbox that feeds
 // it, are Incoming only; DHL lists both Directions.
 function connectionTabs(key) {
