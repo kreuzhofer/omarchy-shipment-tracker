@@ -1,9 +1,12 @@
 // The `shipment-tracker` CLI. The bin script wires real dependencies; tests
 // call main() with a temp state dir, a fixed clock and fake transports.
 //
-// deps: { env, now: () => Date, transport: { fetch }, browser: { catchRedirect }, log(line), out(line), exec? }
+// deps: { env, now: () => Date, transport: { fetch }, browser: { catchRedirect },
+//         chrome: { launch }, sleep(ms), log(line), out(line), exec? }
+// Local time (Amazon's quiet hours, Estimate days) uses env.TZ when set.
 // Logs carry counts and Health only, never tracking numbers, names or addresses.
-import { login } from "./login.mjs";
+import { addAccount, loginAmazon, removeAccount } from "./amazon/connection.mjs";
+import { login as loginDhl } from "./login.mjs";
 import { refresh } from "./refresh.mjs";
 import { manualDhlShipment, parseManualId, removeManual } from "./shipments.mjs";
 import { stateDirFor, updateState } from "./state.mjs";
@@ -13,6 +16,11 @@ const USAGE = `usage: shipment-tracker <command>
   add <trackingNumber>   track a DHL tracking number by hand
   remove <shipmentKey>   stop tracking a Shipment added by hand
   login dhl              log in to dhl.de in a dedicated Chrome window, then sync
+  login amazon:<label>   sign in to that account in its own Chrome window
+  accounts add <label> --accept-risk
+                         register an amazon.de account (then: login amazon:<label>)
+  accounts remove <label>
+                         remove it, its Chrome profile and its Shipments
   refresh [--source <key>]
                          one refresh run (all Connections, or one)
   install                install the hourly refresh timer (idempotent)
@@ -21,20 +29,24 @@ const USAGE = `usage: shipment-tracker <command>
 export async function main(argv, deps) {
   const [command, ...args] = argv;
   const stateDir = stateDirFor(deps.env);
+  const timeZone = deps.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const run = { ...deps, stateDir, timeZone };
   switch (command) {
     case "add":
       return add(args, stateDir, deps);
     case "remove":
       return remove(args, stateDir, deps);
     case "login":
-      return login(args, stateDir, deps);
+      return login(args, run);
+    case "accounts":
+      return accounts(args, run);
     case "refresh": {
       const source = refreshSource(args);
       if (source === undefined) {
         deps.log("usage: shipment-tracker refresh [--source <key>]");
         return 2;
       }
-      return refresh({ stateDir, now: deps.now, transport: deps.transport, log: deps.log, source });
+      return refresh({ ...run, source });
     }
     case "install":
       return install(deps);
@@ -89,4 +101,48 @@ function refreshSource(args) {
   if (args.length === 0) return null;
   if (args.length === 2 && args[0] === "--source" && args[1]) return args[1];
   return undefined;
+}
+
+async function accounts([sub, label, ...flags], run) {
+  if (sub === "add" && label) {
+    const result = await addAccount(label, { acceptRisk: flags.includes("--accept-risk") }, run);
+    if (result.error) {
+      run.log(`accounts: ${result.error}`);
+      return 2;
+    }
+    run.out(`Added Amazon · ${label}. Sign in with: shipment-tracker login amazon:${label}`);
+    return 0;
+  }
+  if (sub === "remove" && label) {
+    if (!(await removeAccount(label, run))) {
+      run.log(`accounts: no Amazon account called ${label}`);
+      return 2;
+    }
+    run.out(`Removed Amazon · ${label}`);
+    return 0;
+  }
+  run.log("usage: shipment-tracker accounts add <label> --accept-risk | accounts remove <label>");
+  return 2;
+}
+
+const AMAZON_LOGIN_RESULTS = {
+  ok: [0, "Signed in; first sync done"],
+  cancelled: [1, "Login cancelled"],
+  "timed-out": [1, "Login timed out after 15 min"],
+  browser: [1, "Chrome didn't start (or is already open for this account)"],
+  "unknown-account": [2, "No such Amazon account; add it with accounts add <label> --accept-risk"],
+};
+
+// `login dhl` or `login amazon:<label>`.
+async function login(args, run) {
+  const label = args.length === 1 ? args[0].match(/^amazon:(.+)$/)?.[1] : null;
+  if (!label) {
+    if (args.length === 1 && args[0] === "dhl") return loginDhl(args, run.stateDir, run);
+    run.log("usage: shipment-tracker login dhl | login amazon:<label>");
+    return 2;
+  }
+  const result = await loginAmazon(label, run);
+  const [code, text] = AMAZON_LOGIN_RESULTS[result] ?? [1, `Signed in, but the first sync stopped: ${result}`];
+  (code === 0 ? run.out : run.log)(`login: ${text}`);
+  return code;
 }

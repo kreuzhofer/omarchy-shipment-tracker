@@ -11,9 +11,9 @@
 // after `timeoutMs`, or "browser" when Chrome or CDP doesn't come up.
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
+import { DHL_LOGIN_PORT } from "./ports.mjs";
 
 const CHROME = "google-chrome-stable";
-const DHL_LOGIN_PORT = 9340;
 const STARTUP_MS = 15_000;
 
 const fail = (code, message) => Object.assign(new Error(message), { code });

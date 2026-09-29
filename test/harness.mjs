@@ -34,18 +34,133 @@ export function fakeDhl(routes) {
   };
 }
 
-export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = fakeDhl({}), browser = fakeBrowser() } = {}) {
+// The CDP methods the Amazon route may use. Anything else (Runtime.enable,
+// Page.addScriptToEvaluateOnNewDocument, Emulation.*, …) fails the test.
+const CDP_ALLOWED = new Set([
+  "Target.getTargets", "Target.createTarget", "Target.attachToTarget", "Page.enable", "Page.navigate",
+  "Target.getTargetInfo", "DOM.getDocument", "DOM.getOuterHTML", "Browser.close",
+]);
+
+// A fake Chrome for the Amazon route, spoken to over raw CDP like the real
+// one. `routes` answers navigations:
+//   history: the order history URL (/gp/css/order-history)
+//   trackers: { "<orderId>#<packageIndex>": page } for /progress-tracker/package
+// A page is an HTML string, { url, html } for a redirect, { error } for a
+// network error, or a function ({ polls }) => page that is re-evaluated on
+// every read (polls = reads since the navigation), e.g. for a user signing in.
+// `{ closed: true }` means the user closed the window.
+// Options: launchFails (Chrome doesn't come up), busy (port already in use).
+// Records launches, CDP methods, navigations and reads with the world clock.
+export function fakeChrome(routes = {}, { launchFails = false, busy = false } = {}) {
+  const fake = {
+    clock: () => new Date(0),
+    launches: [],
+    methods: [],
+    navigations: [],
+    reads: [],
+    hidden: false,
+    open: false,
+    async launch({ args, port, hidden }) {
+      fake.launches.push({ args, port, hidden });
+      if (busy) throw Object.assign(new Error("port in use"), { code: "busy" });
+      if (launchFails) throw Object.assign(new Error("no DevTools"), { code: "browser" });
+      fake.open = true;
+      fake.hidden = hidden;
+      const listeners = new Set();
+      let route = () => ({ url: "about:blank", html: "<html></html>" });
+      let polls = 0;
+      let markClosed;
+      const closed = new Promise((resolve) => { markClosed = resolve; });
+      const current = () => {
+        let page = route({ polls });
+        if (typeof page === "function") page = page({ polls });
+        if (page?.closed) {
+          fake.open = false;
+          markClosed();
+          throw Object.assign(new Error("Chrome went away"), { code: "browser" });
+        }
+        return page;
+      };
+      const resolve = (url) => {
+        const u = new URL(url);
+        let page;
+        if (u.pathname.startsWith("/gp/css/order-history")) page = routes.history;
+        else if (u.pathname === "/progress-tracker/package") page = routes.trackers?.[`${u.searchParams.get("orderId")}#${u.searchParams.get("packageIndex")}`];
+        if (page === undefined) throw Object.assign(new Error(`unexpected navigation to ${u.pathname}`), { code: "unexpected" });
+        return (ctx) => {
+          const p = typeof page === "function" ? page(ctx) : page;
+          if (typeof p === "string") return { url, html: p };
+          return p?.error || p?.closed ? p : { url: p.url ?? url, html: p.html };
+        };
+      };
+      return {
+        closed,
+        async send(method, params = {}, sessionId) {
+          fake.methods.push(method);
+          if (!CDP_ALLOWED.has(method)) throw Object.assign(new Error(`forbidden CDP method ${method}`), { code: "unexpected" });
+          if (!fake.open) throw Object.assign(new Error("Chrome went away"), { code: "browser" });
+          switch (method) {
+            case "Target.getTargets": return { targetInfos: [{ targetId: "T1", type: "page", url: "about:blank" }] };
+            case "Target.attachToTarget": return { sessionId: "S1" };
+            case "Page.enable": return {};
+            case "Page.navigate": {
+              fake.navigations.push({ url: params.url, at: fake.clock().getTime() });
+              route = resolve(params.url);
+              polls = 0;
+              const page = route({ polls });
+              if (page.error) {
+                route = () => ({ url: "chrome-error://chromewebdata/", html: "<html></html>" });
+                return { frameId: "F1", errorText: page.error };
+              }
+              setImmediate(() => { for (const l of listeners) l({ method: "Page.loadEventFired", sessionId, params: {} }); });
+              return { frameId: "F1" };
+            }
+            case "Target.getTargetInfo": {
+              const page = current();
+              polls++;
+              return { targetInfo: { targetId: "T1", type: "page", url: page.url } };
+            }
+            case "DOM.getDocument": return { root: { nodeId: 1 } };
+            case "DOM.getOuterHTML": {
+              const page = current();
+              fake.reads.push({ url: page.url, at: fake.clock().getTime() });
+              return { outerHTML: page.html };
+            }
+            case "Browser.close": fake.open = false; markClosed(); return {};
+          }
+          return {};
+        },
+        onEvent(listener) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        async hide() { fake.hidden = true; },
+        async close() { if (fake.open) await this.send("Browser.close"); },
+      };
+    },
+  };
+  return fake;
+}
+
+export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = fakeDhl({}), browser = fakeBrowser(), chrome = fakeChrome() } = {}) {
   const root = await mkdtemp(join(tmpdir(), "shipment-tracker-test-"));
   const env = {
-    HOME: root, XDG_STATE_HOME: join(root, "state"), XDG_CONFIG_HOME: join(root, "config"), XDG_DATA_HOME: join(root, "data"),
+    HOME: root,
+    XDG_STATE_HOME: join(root, "state"),
+    XDG_CONFIG_HOME: join(root, "config"),
+    XDG_DATA_HOME: join(root, "data"),
+    TZ: "Europe/Berlin",
   };
   const stateDir = join(env.XDG_STATE_HOME, "omarchy-shipment-tracker");
   const world = {
     now: new Date(now),
     transport,
     browser,
+    chrome,
     env,
     stateDir,
+    dataDir: join(env.XDG_DATA_HOME, "omarchy-shipment-tracker"),
+    sleeps: [],
     logs: [],
     output: [],
     setClock(iso) { world.now = new Date(iso); },
@@ -55,6 +170,9 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
         now: () => new Date(world.now),
         transport: world.transport,
         browser: world.browser,
+        chrome: world.chrome,
+        // Pacing waits advance the fixed clock instead of sleeping.
+        sleep: async (ms) => { world.sleeps.push(ms); world.now = new Date(world.now.getTime() + ms); },
         log: (line) => world.logs.push(line),
         out: (line) => world.output.push(line),
       });
@@ -65,8 +183,10 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
     async tokenFile() { return JSON.parse(await readFile(join(stateDir, "dhl-tokens.json"), "utf8")); },
     async tokenFileMode() { return (await stat(join(stateDir, "dhl-tokens.json"))).mode & 0o777; },
     async stateDirMode() { return (await stat(stateDir)).mode & 0o777; },
+    async exists(path) { return stat(path).then(() => true, () => false); },
     async cleanup() { await rm(root, { recursive: true, force: true }); },
   };
+  chrome.clock = () => world.now;
   return world;
 }
 
