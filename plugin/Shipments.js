@@ -23,28 +23,81 @@ var attention = { "Ready for pickup": true, "Problem": true }
 var rank = { "Problem": 0, "Ready for pickup": 1, "Out for delivery": 2, "In transit": 3, "Returning": 3,
   "Announced": 4, "Unknown": 5, "Delivered": 6, "Returned": 6 }
 
-// The day a Terminal Shipment was delivered or returned, as the Carrier or
-// Amazon reported it: its Estimate is that day (see dhl/status.mjs,
-// amazon/status.mjs), or, for an Order only mail knows, the delivery mail's
-// date. Without one, when it was first seen Terminal.
-function terminalDay(s) {
-  var e = s.estimate
-  var mailed = s.mail && s.mail.step === "Delivered" ? s.mail.at : null
-  return String((e && (e.to || e.from)) || mailed || s.terminalAt || s.changedAt || "").slice(0, 10)
+// An Order only mail knows whose last mail said it was delivered (#59). Mail
+// never decides a Status, so it stays Unknown; the list shows it with the
+// Terminal ones (sorted by the mail's day, dimmed, not pending).
+function mailDelivered(s) {
+  return fromMail(s) && !!s.mail && s.mail.step === "Delivered" && !terminal[s.status]
 }
 
-// Urgency first. Within a group newest change first; Terminal ones by the day
+// Finished: Terminal, or delivered as far as mail knows.
+function settled(s) {
+  return terminal[s.status] === true || mailDelivered(s)
+}
+
+// A stored date as a local "yyyy-MM-dd": a Carrier's day or date-time with
+// offset keeps its own day, an instant ("…Z", as the CLI writes its
+// timestamps) is taken in local time.
+function dayOf(value) {
+  var v = String(value || "")
+  if (v === "") return ""
+  if (/Z$/.test(v)) return localDay(new Date(v).getTime())
+  return v.slice(0, 10)
+}
+
+// The day a finished Shipment was delivered or returned, as the Carrier or
+// Amazon reported it: its Estimate is that day (see dhl/status.mjs,
+// amazon/status.mjs); for an Order only mail knows, the delivery mail's day.
+// Without one, when it was first seen Terminal.
+function terminalDay(s) {
+  if (mailDelivered(s)) return dayOf(s.mail.at)
+  var e = s.estimate
+  if (e && (e.to || e.from)) return String(e.to || e.from).slice(0, 10)
+  return dayOf(s.terminalAt || s.changedAt)
+}
+
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+// "2026-09-28" → "Mon 28 Sep", as the CLI's estimate.mjs dayLabel.
+function dayLabel(day) {
+  var p = String(day || "").slice(0, 10).split("-").map(Number)
+  if (p.length !== 3 || p.some(isNaN)) return ""
+  return weekdays[new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()] + " " + p[2] + " " + MONTHS[p[1] - 1]
+}
+
+// A Terminal card's date line, the same for every Source: "Delivered Mon 28
+// Sep", "Returned Mon 28 Sep". Never the page's own words ("Zugestellt: …").
+function terminalText(s) {
+  if (!terminal[s.status]) return ""
+  var label = dayLabel(terminalDay(s))
+  return label ? s.status + " " + label : s.status
+}
+
+// Urgency first. Within a group newest change first; finished ones by the day
 // they were delivered, newest first, since merges and migrations bump changedAt.
+function rankOf(s) {
+  if (mailDelivered(s)) return rank["Delivered"]
+  return rank[s.status] !== undefined ? rank[s.status] : 5
+}
+
 function byUrgency(a, b) {
-  var ra = rank[a.status] !== undefined ? rank[a.status] : 5
-  var rb = rank[b.status] !== undefined ? rank[b.status] : 5
+  var ra = rankOf(a), rb = rankOf(b)
   if (ra !== rb) return ra - rb
-  if (terminal[a.status] && terminal[b.status]) {
+  if (settled(a) && settled(b)) {
     var byDay = terminalDay(b).localeCompare(terminalDay(a))
     if (byDay) return byDay
     return String(b.terminalAt || b.changedAt || "").localeCompare(String(a.terminalAt || a.changedAt || ""))
   }
   return String(b.changedAt || "").localeCompare(String(a.changedAt || ""))
+}
+
+// Whether a row is in the 7 / 30 days view: finished ones by the day they
+// were delivered, the others by their last change. Manual adds waiting for
+// `add` always are.
+function inWindow(s, days, nowMs) {
+  if (String(s.key).indexOf("queued:") === 0) return true
+  if (settled(s)) return terminalDay(s) >= localDay(nowMs - days * 864e5)
+  return new Date(s.changedAt).getTime() >= nowMs - days * 864e5
 }
 
 function localDay(ms) {
@@ -75,6 +128,15 @@ function estimateText(s, nowMs) {
   if (day === "") return text
   var label = day === localDay(nowMs) ? "Today" : day === localDay(nowMs + 864e5) ? "Tomorrow" : ""
   return label ? text.replace(/^[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}/, label) : text
+}
+
+// The card's right-hand line. Finished cards: the delivery day only (an
+// Order only mail knows has it in its hint), no "… ago", since the day is
+// what matters. Others: the Estimate and how long since the last change.
+function dateLine(s, nowMs) {
+  if (mailDelivered(s)) return ""
+  if (terminal[s.status]) return terminalText(s)
+  return [estimateText(s, nowMs), age(s.changedAt, nowMs)].filter(function(t) { return t !== "" }).join("  ·  ")
 }
 
 // "2 need you · 1 arriving today · " (empty parts left out).
@@ -113,9 +175,18 @@ function fromMail(s) {
   return typeof s.hint === "string" && s.hint !== ""
 }
 
+// The mail's hint with the day as every other date line writes it:
+// "Delivered · per mail, Tue 1 Sep". "Status unknown" stays as it is.
+function hintText(s) {
+  var m = s.mail
+  if (!m || !m.step || !m.at || s.hint.indexOf(" · per mail, ") < 0) return s.hint
+  var label = dayLabel(dayOf(m.at))
+  return label ? m.step + " · per mail, " + label : s.hint
+}
+
 // The card's Status line: glyph and Status, or the mail's hint.
 function statusLine(s) {
-  if (fromMail(s)) return "\u{F01F0}  " + s.hint // email-outline
+  if (fromMail(s)) return "\u{F01F0}  " + hintText(s) // email-outline
   return statusGlyph(s.status) + "  " + s.status
 }
 
@@ -133,11 +204,11 @@ function inTab(s, tab) {
   return (s.direction === "Outgoing" ? "Outgoing" : "Incoming") === tab
 }
 
-// The tab label's count: the tab's pending Shipments, i.e. not Terminal and
-// not Dismissed (Unknown and mail-only rows count). `shipments` are the ones
-// in the 7 / 30 days view, Dismissed included.
+// The tab label's count: the tab's pending Shipments, i.e. not finished and
+// not Dismissed (Unknown and mail-only rows count, unless mail said
+// delivered). `shipments` are the ones in the 7 / 30 days view, Dismissed included.
 function pendingCount(tab, shipments) {
-  return shipments.filter(function(s) { return inTab(s, tab) && !terminal[s.status] && !s.dismissed }).length
+  return shipments.filter(function(s) { return inTab(s, tab) && !settled(s) && !s.dismissed }).length
 }
 
 // The tabs a troubled Connection affects: Amazon, and the mailbox that feeds

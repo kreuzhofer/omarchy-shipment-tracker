@@ -442,7 +442,7 @@ test("Amazon: a transition into Delivered is a status event that opens the Order
 
   assert.deepEqual(kinds(events), [["status", `amazon:${ORDER_1}#0`, "Delivered"]]);
   assert.equal(events[0].title, "Your Gartenschlauch 20 m was delivered");
-  assert.equal(events[0].body, "Amazon · Personal · Zugestellt: 29. September");
+  assert.equal(events[0].body, "Amazon · Personal · Delivered Tue 29 Sep");
   assert.equal(events[0].url, AMAZON_PAGE + ORDER_1);
 });
 
