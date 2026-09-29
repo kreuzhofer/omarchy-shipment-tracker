@@ -428,3 +428,58 @@ test("removing the owning account with no other owner leaves a link-only row and
   assert.equal((await world.shipment(`amazon:${MANUAL}`)).linkOnly, true);
   assert.deepEqual(events, []);
 });
+
+// ---- #43: an Order added by hand never shows twice. An account that said
+// no, or never had to be asked, can still list the Order in its history later
+// (history lag, an Order placed just after the paste); that is ownership too.
+
+function listsLater(routes, label, orderId, title) {
+  const other = label === "Personal" ? P_ORDER : B_ORDER;
+  routes.accounts[label].history = historyPage([order(other), order(orderId, [0], title)]);
+  routes.accounts[label].trackers = { ...tracker(other), ...tracker(orderId, 0, { shortStatus: "IN_TRANSIT" }) };
+}
+
+test("an account that said no and later lists the Order in its history takes it over, without a duplicate or a new event", async (t) => {
+  const routes = accountsRoutes();
+  routes.accounts.Personal.search = { [MANUAL]: noMatch };
+  routes.accounts.Business.search = { [MANUAL]: noMatch };
+  const world = await world2(t, routes);
+  await connect(world, "Personal", "Business");
+  await world.run("add", MANUAL);
+  // Business is busy, so only Personal answers: the Order isn't link-only yet.
+  const release = await holdLock(join(world.dataDir, "amazon/Business"));
+  await refreshAt(world, "2026-09-29T11:00:00.000Z");
+  release();
+  const before = await world.shipment(`amazon:${MANUAL}`);
+  assert.deepEqual(before.probedBy, ["amazon:Personal"]);
+  assert.equal(before.linkOnly, false);
+
+  listsLater(routes, "Personal", MANUAL, "Drucker");
+  const events = await refreshAt(world, "2026-09-29T12:00:00.000Z");
+
+  const rows = (await world.shipmentsFile()).shipments.filter((s) => s.orderId === MANUAL)
+    .map((s) => [s.key, s.account, s.connections]);
+  assert.deepEqual(rows, [[`amazon:${MANUAL}#0`, "Personal", ["amazon:Personal", "manual"]]]);
+  assert.deepEqual(events, []);
+});
+
+test("a link-only Order that later appears in an account's history is taken over the same way", async (t) => {
+  const routes = accountsRoutes();
+  routes.accounts.Personal.search = { [MANUAL]: noMatch };
+  routes.accounts.Business.search = { [MANUAL]: noMatch };
+  const world = await world2(t, routes);
+  await connect(world, "Personal", "Business");
+  await world.run("add", MANUAL);
+  await refreshAt(world, "2026-09-29T11:00:00.000Z");
+  assert.equal((await world.shipment(`amazon:${MANUAL}`)).linkOnly, true);
+
+  listsLater(routes, "Business", MANUAL, "Drucker");
+  world.chrome.navigations.length = 0;
+  const events = await refreshAt(world, "2026-09-29T12:00:00.000Z");
+
+  const rows = (await world.shipmentsFile()).shipments.filter((s) => s.orderId === MANUAL)
+    .map((s) => [s.key, s.account, s.connections, s.status]);
+  assert.deepEqual(rows, [[`amazon:${MANUAL}#0`, "Business", ["amazon:Business", "manual"], "In transit"]]);
+  assert.deepEqual(events, []);
+  assert.deepEqual(searches(world), []);
+});
