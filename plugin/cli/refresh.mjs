@@ -22,6 +22,10 @@
 // sequence (see health.mjs).
 // Dismissed Shipments that got a real update come back at the same point
 // (see dismiss.mjs).
+//
+// Item images not cached yet are fetched after every Connection, so they
+// never sit between amazon.de pages; files nothing references any more go
+// with the retention sweep (see images.mjs).
 import { refreshAmazon } from "./amazon/connection.mjs";
 import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
@@ -31,6 +35,7 @@ import { KEY as MAIL, refreshMail } from "./mail/connection.mjs";
 import { clearUpdatedDismissals } from "./dismiss.mjs";
 import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
 import { recordConnectionEvents, recordFailure } from "./health.mjs";
+import { fetchImages, removeUnusedImages } from "./images.mjs";
 import { recordExtensions } from "./login-hint.mjs";
 import { clearStaleLogins } from "./logins.mjs";
 import { applyDhlReading, carriedByDhl } from "./merge.mjs";
@@ -146,10 +151,12 @@ export async function refresh({ stateDir, env, now, transport, chrome, mcp, slee
     await lookUp({ afterAmazon: true });
   }
 
+  await fetchImages({ stateDir, transport, log });
+
   // "Refreshing…" lasts the whole run, Amazon's paced page reads included.
   // Retention runs before the events, so a Shipment dropped now tells nothing;
   // Connection events follow the Shipment events.
-  const { told, dropped } = await updateState(stateDir, (state) => {
+  const { told, dropped } = await updateState(stateDir, async (state) => {
     state.sources.refreshing = null;
     if (dhlNetworkFailure && (counts.synced > 0 || counts.lookedUp > 0) && state.sources.connections?.[DHL]) {
       recordFailure(state.sources.connections[DHL], now(), "network", { countNetwork: true });
@@ -158,6 +165,7 @@ export async function refresh({ stateDir, env, now, transport, chrome, mcp, slee
       recordFailure(state.sources.connections[MAIL], now(), "network", { countNetwork: true });
     }
     const dropped = applyRetention(state, now());
+    await removeUnusedImages(stateDir, state.shipments);
     // Notifications ignore dismissals; an update notifies and brings the row
     // back. A Shipment retention dropped is gone, dismissal and all.
     clearUpdatedDismissals(state.shipments);

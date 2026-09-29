@@ -14,23 +14,16 @@ const NAV = `<header id="navbar-main"><form id="nav-search-bar-form" accept-char
 <a href="/ap/signin?openid.return_to=https%3A%2F%2Fwww.amazon.de%2F&amp;ref_=nav_signin" class="nav-a">Konto und Listen</a>
 <form name="signIn" method="post" action="/ap/signin" class="nav-hidden-signin"></form></header>`;
 
-// One order card. `shipments`: [{ packageIndex, shipmentId, title, primary }].
+// One order card. `shipments`: [{ packageIndex, shipmentId, title, primary,
+// image, items }]: `image` is the first item's `<img src>` (null: no image),
+// `items` more items in the same box ([{ title, image }]).
 // Live, digital orders (D01-…) had no tracker link; the fixture gives them one
 // anyway so the tests show they are ignored by their Order ID.
 function orderCard({ orderId, shipments }) {
   const boxes = shipments.map((s) => `
 <div class="a-box delivery-box"><div class="a-box-inner">
   <div class="a-row"><div class="yohtmlc-shipment-status-primaryText"><h3><span class="a-size-medium delivery-box__primary-text a-text-bold">${esc(s.primary ?? "Unterwegs")}</span></h3></div></div>
-  <ul class="a-unordered-list a-nostyle a-vertical" role="list"><li><span class="a-list-item">
-    <div class="a-fixed-left-grid item-box a-spacing-none"><div class="product-image"><a class="a-link-normal" tabindex="-1" href="/dp/B000000000?ref=ppx_yo2ov_dt_b_fed_asin_title"><img alt="${esc(s.title)}" src="https://m.media-amazon.com/images/I/example._SS142_.jpg"></a></div>
-    <div class="a-row">
-        <div class="yohtmlc-product-title">
-            <a aria-hidden="false" class="a-link-normal" href="/dp/B000000000?ref=ppx_yo2ov_dt_b_fed_asin_title">
-                ${esc(s.title)}
-            </a>
-        </div>
-    </div></div>
-  </span></li></ul>
+  <ul class="a-unordered-list a-nostyle a-vertical" role="list">${[{ title: s.title, image: s.image }, ...(s.items ?? [])].map(itemBox).join("")}</ul>
   <ul class="yohtmlc-shipment-level-connections a-nostyle" role="list">${`
     <li><span class="a-button a-button-normal a-spacing-mini a-button-base"><span class="a-button-inner"><a href="/progress-tracker/package?ref=ppx_yo2ov_dt_b_fed_track_package&amp;orderId=${orderId}&amp;_encoding=UTF8&amp;shipmentId=${s.shipmentId}&amp;packageIndex=${s.packageIndex}&amp;vt=NOTIFICATIONS" class="a-button-text" role="button"> Lieferung verfolgen </a></span></span></li>`}
   </ul>
@@ -43,12 +36,36 @@ function orderCard({ orderId, shipments }) {
 </div></div>`;
 }
 
-export function historyPage(orders) {
+const DEFAULT_IMAGE = "https://m.media-amazon.com/images/I/example._SS142_.jpg";
+
+function itemBox({ title, image = DEFAULT_IMAGE }) {
+  const img = image === null ? "" : `<img alt="${esc(title)}" src="${esc(image)}" data-a-hires="${esc(String(image).replace(/\._[^/]*_\.jpg$/, "._SS284_.jpg"))}">`;
+  return `<li><span class="a-list-item">
+    <div class="a-fixed-left-grid item-box a-spacing-none"><div class="product-image"><a class="a-link-normal" tabindex="-1" href="/dp/B000000000?ref=ppx_yo2ov_dt_b_fed_asin_title">${img}</a></div>
+    <div class="a-row">
+        <div class="yohtmlc-product-title">
+            <a aria-hidden="false" class="a-link-normal" href="/dp/B000000000?ref=ppx_yo2ov_dt_b_fed_asin_title">
+                ${esc(title)}
+            </a>
+        </div>
+    </div></div>
+  </span></li>`;
+}
+
+// Below the orders, as on the live page: a recommendations carousel with
+// product images of its own (the last delivery box's chunk runs into it).
+export const RECOMMENDATIONS = `<div class="a-carousel-container"><ol class="a-carousel">
+<li class="a-carousel-card"><div class="product-image"><img class="asin-image" src="https://m.media-amazon.com/images/I/recommended1._AC_UL75_SR75,75_.jpg"></div></li>
+<li class="a-carousel-card"><div class="p13n-product-image"><img src="https://m.media-amazon.com/images/I/recommended2._AC_AA152_.jpg"></div></li>
+</ol></div>`;
+
+// `footer`: HTML after the orders (e.g. RECOMMENDATIONS).
+export function historyPage(orders, { footer = "" } = {}) {
   return `${head("Meine Bestellungen")}<body>${NAV}
 <div class="your-orders-content-container aok-relative js-yo-container"><div class="your-orders-content-container__content js-yo-main-content">
 <h1>Meine Bestellungen</h1>
 ${orders.map(orderCard).join("\n")}
-</div></div></body></html>`;
+</div></div>${footer}</body></html>`;
 }
 
 // A progress-tracker page. `state` is merged over a delivered-by-DHL default;

@@ -15,6 +15,7 @@ import { markKnown, recordEvents } from "../events.mjs";
 import { absorbMailOrders } from "../mail/connection.mjs";
 import { connectionRecord, recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { withLock } from "../lock.mjs";
+import { recordImageUrls, removeUnusedImages } from "../images.mjs";
 import { hasExtensions, HINT_URL, recordExtensions } from "../login-hint.mjs";
 import { runLogin } from "../logins.mjs";
 import { nextAmazonPort } from "../ports.mjs";
@@ -76,9 +77,10 @@ export async function addAccount(label, { acceptRisk }, { stateDir, now }) {
 // owned goes back to being looked for, or is link-only.
 export async function removeAccount(label, { stateDir, env, now }) {
   const key = connectionKey(label);
-  const removed = await updateState(stateDir, (state) => {
+  const removed = await updateState(stateDir, async (state) => {
     if (!state.sources.connections[key]) return false;
     forgetConnection(state, key, now());
+    await removeUnusedImages(stateDir, state.shipments);
     return true;
   });
   const profileDir = profileDirFor(env, label);
@@ -155,6 +157,7 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     const dropped = droppedKeys(shipments);
     const kept = readings.filter((r) => !isDropped(dropped, r.key));
     for (const reading of kept) upsert(shipments.shipments, reading, conn, key, at);
+    recordImageUrls(shipments.shipments, result.images ?? []);
     // An Order mail found first is now read here: one Shipment per parcel.
     absorbMailOrders(shipments.shipments, kept.map((r) => r.orderId));
     applyOwnership(shipments.shipments, key, conn.label, { ...result, readings: kept });

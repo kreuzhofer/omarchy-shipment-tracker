@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { releaseOwnership, settleLinkOnly } from "./amazon/manual.mjs";
 import { forgetTokens } from "./dhl/auth.mjs";
 import { connectionName, connectionRecord } from "./health.mjs";
+import { removeUnusedImages } from "./images.mjs";
 import { clearStaleLogins } from "./logins.mjs";
 import { signOutMail } from "./mail/connection.mjs";
 import { dataDirFor, updateState } from "./state.mjs";
@@ -55,7 +56,10 @@ export async function disconnect(args, { stateDir, env, now, exec, mcp, log, out
     return 1;
   }
   await SIGN_INS[key]({ stateDir, env, mcp, log });
-  await updateState(stateDir, (state) => forgetConnection(state, key, now()));
+  await updateState(stateDir, async (state) => {
+    forgetConnection(state, key, now());
+    await removeUnusedImages(stateDir, state.shipments);
+  });
   out(`Disconnected ${name}`);
   return 0;
 }

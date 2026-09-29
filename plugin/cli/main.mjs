@@ -15,6 +15,7 @@ import { dismiss, undismiss } from "./dismiss.mjs";
 import { login as loginDhl } from "./login.mjs";
 import { clearStale } from "./logins.mjs";
 import { loginMail } from "./mail/connection.mjs";
+import { fetchImages } from "./images.mjs";
 import { findByTrackingNumber } from "./merge.mjs";
 import { refresh } from "./refresh.mjs";
 import { manualDhlShipment, parseManualId, removeManual } from "./shipments.mjs";
@@ -192,6 +193,8 @@ async function login(args, run) {
     return 2;
   }
   const result = await loginAmazon(label, run);
+  // The first sync's item images, like at the end of a refresh.
+  await fetchImages(run);
   const [code, text] = AMAZON_LOGIN_RESULTS[result] ?? [1, `Signed in, but the first sync stopped: ${result}`];
   if (text) (code === 0 ? run.out : run.log)(`login: ${text}`);
   return code;

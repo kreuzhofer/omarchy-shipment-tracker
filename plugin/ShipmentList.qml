@@ -6,7 +6,9 @@
 // Incoming), then one card per Shipment of the tab, in urgency order:
 // title + Carrier/Source badge | 5-step progress bar | Status + Delayed,
 // Estimate · age. Ready for pickup and Problem cards get a coloured border;
-// Terminal and Dismissed cards are dimmed. Footer: the manual-add field.
+// Terminal and Dismissed cards are dimmed. Amazon cards lead with a square
+// tile (#58, option A of #54): the item's image, cached by the CLI, or a
+// package glyph until there is one. Footer: the manual-add field.
 // A manual add offers removal on hover, every card dismissal (#35): the card
 // slides out and the cards below close the gap; "N dismissed · show" under
 // the list brings Dismissed cards back into view, dimmed, with "Show again".
@@ -297,6 +299,9 @@ Column {
       readonly property bool hot: cardMouse.containsMouse || removeHovered || dismissHovered
       // A "Looking up…" card has nothing to dismiss yet.
       readonly property bool dismissable: String(s.key).indexOf("queued:") !== 0
+      // Amazon cards (merged Amazon + DHL ones too) lead with the item tile.
+      readonly property bool tiled: s.source === "Amazon"
+      readonly property int tileSize: root.cardHeight - Style.space(16)
       width: list.width
       height: root.cardHeight
       radius: Style.cornerRadius
@@ -313,9 +318,36 @@ Column {
         onClicked: root.openRequested(card.s.url)
       }
 
+      // The item tile: the cached image (a local file; the popup never
+      // fetches anything) on white, or the package glyph without one.
+      Rectangle {
+        id: tile
+        visible: card.tiled
+        readonly property bool shown: thumb.status === Image.Ready
+        width: card.tileSize; height: width
+        x: Style.space(8)
+        anchors.verticalCenter: parent.verticalCenter
+        radius: Style.cornerRadius
+        color: shown ? "white" : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
+        Image {
+          id: thumb
+          visible: tile.shown
+          anchors.fill: parent; anchors.margins: Style.space(3)
+          source: card.tiled && card.s.image ? "file://" + card.s.image : ""
+          sourceSize.width: 96; sourceSize.height: 96
+          fillMode: Image.PreserveAspectFit; smooth: true; asynchronous: true
+        }
+        Text {
+          visible: !tile.shown
+          anchors.centerIn: parent
+          text: "\u{F03D7}"
+          color: Qt.darker(root.fg, 1.8); font.family: root.ff; font.pixelSize: Style.font.display
+        }
+      }
+
       Column {
         anchors.fill: parent
-        anchors.leftMargin: Style.space(10)
+        anchors.leftMargin: Style.space(10) + (card.tiled ? card.tileSize + Style.space(10) : 0)
         anchors.rightMargin: Style.space(10)
         anchors.topMargin: Style.space(8)
         anchors.bottomMargin: Style.space(8)
