@@ -366,6 +366,149 @@ Item {
     }
   }
 
+  // ---- The Sources page (#31; #18 variant B). The popup shows one page at a
+  // time: "list", "sources" (the first Source not set up yet opens by itself)
+  // or "sources:<row>" with row dhl, amazon, mail or none (all closed).
+  property string page: "list"
+  function setPage(name) {
+    var p = String(name || "list")
+    if (p !== "list" && p !== "sources" && p.indexOf("sources:") !== 0) return
+    // sources:amazon:<label> and sources:<label> open the Amazon row.
+    var row = p.indexOf("sources:") === 0 ? p.substring(8) : ""
+    if (row !== "" && ["dhl", "amazon", "mail", "none"].indexOf(row) < 0) p = "sources:amazon"
+    root.page = p
+    if (p !== "list") { root.checkNode(); root.checkTimer() }
+  }
+  readonly property bool onSources: page !== "list"
+  // The accordion row that is open ("" for none).
+  readonly property string openRow: {
+    if (page.indexOf("sources:") === 0) return page === "sources:none" ? "" : page.substring(8)
+    if (!Shipments.isSetUp(connection("dhl"))) return "dhl"
+    if (!amazonAccounts.some(function(a) { return Shipments.isSetUp(a.connection) })) return "amazon"
+    if (mailAvailable && !Shipments.isSetUp(connection("mail"))) return "mail"
+    return ""
+  }
+  function toggleRow(row) { root.setPage(root.openRow === row ? "sources:none" : "sources:" + row) }
+
+  function connection(key) {
+    var c = sourcesState.connections || {}
+    return c[key] || null
+  }
+  // The Amazon accounts in the order they were added: [{ key, connection }].
+  readonly property var amazonAccounts: {
+    var c = sourcesState.connections || {}
+    return Object.keys(c).filter(function(k) { return k.indexOf("amazon:") === 0 && c[k] })
+      .map(function(k) { return { key: k, connection: c[k] } })
+  }
+  // Microsoft 365 mail comes with #34. Until then its row is a placeholder
+  // and never opens by itself; #34 sets this to true.
+  readonly property bool mailAvailable: false
+
+  // Node.js runs the CLI: null until checked, then true / false. Without it
+  // the Sources rows and the add field offer to install it.
+  property var nodeOk: null
+  property bool nodeInstalling: false
+  function checkNode() { if (!nodeCheck.running) nodeCheck.running = true }
+  // `omarchy pkg add` asks for sudo, so it runs in Omarchy's floating terminal.
+  function installNode() {
+    root.nodeInstalling = true
+    Quickshell.execDetached([root.omarchyBin + "omarchy-launch-floating-terminal-with-presentation", "omarchy pkg add nodejs npm"])
+  }
+  Process {
+    id: nodeCheck
+    command: ["sh", "-c", "command -v node >/dev/null"]
+    onExited: function(exitCode, exitStatus) {
+      var was = root.nodeOk
+      root.nodeOk = exitCode === 0
+      if (!root.nodeOk) return
+      root.nodeInstalling = false
+      // What failed on load without Node.
+      if (was === false) {
+        installProcess.running = true
+        clearStaleProcess.running = true
+      }
+    }
+  }
+  // While the install terminal is open, look for Node every few seconds.
+  Timer {
+    interval: 3000
+    repeat: true
+    running: root.nodeInstalling
+    onTriggered: root.checkNode()
+  }
+  Timer {
+    interval: 10 * 60000
+    running: root.nodeInstalling
+    onTriggered: root.nodeInstalling = false
+  }
+
+  // The Amazon add form: open while there's no account, else behind
+  // "+ Add another Amazon account". The draft survives closing the popup.
+  property bool addingAccount: false
+  property string draftLabel: ""
+  property bool draftRisk: false
+  property string accountError: ""
+  readonly property bool addingAccountRuns: addAccountProcess.running
+  readonly property string draftProblem: Shipments.labelProblem(draftLabel, amazonAccounts)
+  readonly property bool canAddAccount: draftProblem === "" && draftRisk && !activeLogin
+    && !addAccountProcess.running && nodeOk !== false
+
+  // `accounts add <label> --accept-risk` (the risk accepted for this account
+  // only), then its Login.
+  function addAccount() {
+    if (!root.canAddAccount) return
+    var label = root.draftLabel.trim()
+    root.accountError = ""
+    addAccountProcess.label = label
+    addAccountProcess.command = ["node", root.cliPath, "accounts", "add", label, "--accept-risk"]
+    addAccountProcess.running = true
+  }
+  function cancelAddAccount() {
+    root.addingAccount = false
+    root.draftLabel = ""
+    root.draftRisk = false
+    root.accountError = ""
+  }
+
+  Process {
+    id: addAccountProcess
+    property string label: ""
+    stderr: StdioCollector { id: accountStderr }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0) {
+        var message = String(accountStderr.text || "").trim().replace(/^accounts: /, "")
+        root.accountError = message !== "" ? message : "Couldn't add the account (is Node.js installed?)"
+        return
+      }
+      root.cancelAddAccount()
+      root.reloadFiles()
+      root.login("amazon:" + addAccountProcess.label)
+    }
+  }
+
+  // The hourly refresh timer: null until checked, then true / false. The
+  // Sources page offers uninstalling it (before removing the widget; while
+  // the widget stays, it installs the timer again when the shell starts).
+  property var timerInstalled: null
+  readonly property bool timerBusy: timerProcess.running
+  function checkTimer() { if (!timerCheck.running) timerCheck.running = true }
+  function uninstallTimer() { root.runTimerCommand("uninstall") }
+  function installTimer() { root.runTimerCommand("install") }
+  function runTimerCommand(command) {
+    if (timerProcess.running) return
+    timerProcess.command = ["node", root.cliPath, command]
+    timerProcess.running = true
+  }
+  Process {
+    id: timerCheck
+    command: ["systemctl", "--user", "is-enabled", "--quiet", "shipment-tracker-refresh.timer"]
+    onExited: function(exitCode, exitStatus) { root.timerInstalled = exitCode === 0 }
+  }
+  Process {
+    id: timerProcess
+    onExited: function(exitCode, exitStatus) { root.checkTimer() }
+  }
+
   // Installs (or refreshes) the timer and service units; idempotent.
   Process {
     id: installProcess
@@ -382,5 +525,6 @@ Item {
   Component.onCompleted: {
     installProcess.running = true
     clearStaleProcess.running = true
+    checkNode()
   }
 }

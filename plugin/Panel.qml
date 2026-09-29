@@ -1,5 +1,5 @@
-// The popup, anchored to the bar icon. Hosts the Store (files + CLI) and the
-// list page.
+// The popup, anchored to the bar icon. Hosts the Store (files + CLI), the
+// list page and the Sources page (#31). Closing it returns to the list.
 //
 // IPC, for screenshot checks:
 //   omarchy-shell kreuzhofer.shipment-tracker show|hide|toggle
@@ -13,6 +13,9 @@
 //   omarchy-shell kreuzhofer.shipment-tracker showDismissed <true|false>  the footer's "show"
 //   omarchy-shell kreuzhofer.shipment-tracker login <key> same as a banner's Log in
 //   omarchy-shell kreuzhofer.shipment-tracker cancelLogin same as the progress banner's Cancel
+//   omarchy-shell kreuzhofer.shipment-tracker page list|sources|sources:<row>
+//       the Shipments list, or the Sources page (the first Source not set up
+//       opens), or it with one row open: dhl, amazon, mail, none
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -31,7 +34,14 @@ Panel {
 
   Store { id: backend; host: root.hostWidget }
 
-  onOpenedChanged: if (opened) backend.nowMs = Date.now()
+  onOpenedChanged: {
+    if (opened) {
+      backend.nowMs = Date.now()
+      backend.checkNode()
+    } else {
+      backend.setPage("list")
+    }
+  }
 
   function openUrl(url) {
     if (!url) return
@@ -60,6 +70,7 @@ Panel {
     function showDismissed(show: bool): void { backend.showDismissed = show }
     function login(key: string): void { backend.login(key) }
     function cancelLogin(): void { backend.cancelLogin() }
+    function page(name: string): void { backend.setPage(name) }
   }
 
   KeyboardPanel {
@@ -70,18 +81,19 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(470))
-    contentHeight: panel.fittedContentHeight(list.implicitHeight)
+    contentHeight: panel.fittedContentHeight(backend.onSources ? sources.implicitHeight : list.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       // Typing in the add field must not trigger list shortcuts.
-      blocked: list.editing
+      blocked: list.editing || sources.editing
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
       ShipmentList {
         id: list
+        visible: !backend.onSources
         anchors.left: parent.left
         anchors.right: parent.right
         store: backend
@@ -89,6 +101,26 @@ Panel {
         ff: root.ff
         onOpenRequested: function(url) { root.openUrl(url) }
         onCloseRequested: root.close()
+        onSourcesRequested: backend.setPage("sources")
+      }
+
+      // Scrolls when the page is taller than the screen allows.
+      Flickable {
+        visible: backend.onSources
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: sources.implicitHeight
+        clip: true
+        interactive: contentHeight > height
+        boundsBehavior: Flickable.StopAtBounds
+
+        SourcesPage {
+          id: sources
+          width: parent.width
+          store: backend
+          fg: root.fg
+          ff: root.ff
+        }
       }
     }
   }
