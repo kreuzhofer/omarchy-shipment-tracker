@@ -32,8 +32,10 @@ export function mailPaths(stateDir) {
 
 // Starts the server with a fresh log dir (Softeria's logs hold only the
 // last run) and does the MCP handshake. `install`: the transport may install
-// the pinned server first when it's missing.
-export async function openServer(mcp, stateDir, { install = true } = {}) {
+// the pinned server first when it's missing. Softeria asks Graph for text
+// bodies; `html: true` starts it asking for HTML ones (MS365_MCP_BODY_FORMAT),
+// which only the item ladder reads (see connection.mjs).
+export async function openServer(mcp, stateDir, { install = true, html = false } = {}) {
   const paths = mailPaths(stateDir);
   await mkdir(paths.dir, { recursive: true, mode: 0o700 });
   await chmod(paths.dir, 0o700);
@@ -44,6 +46,7 @@ export async function openServer(mcp, stateDir, { install = true } = {}) {
       MS365_MCP_TOKEN_CACHE_PATH: paths.tokenCache,
       MS365_MCP_SELECTED_ACCOUNT_PATH: paths.selectedAccount,
       MS365_MCP_LOG_DIR: paths.logDir,
+      ...(html ? { MS365_MCP_BODY_FORMAT: "html" } : {}),
     },
     install,
   });

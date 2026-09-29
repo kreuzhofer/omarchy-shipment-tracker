@@ -32,7 +32,7 @@ Column {
   Text {
     width: root.width
     wrapMode: Text.WordWrap
-    text: "Optional. Reads delivery mails in your Microsoft 365 mailbox, read-only, to catch Amazon Orders from accounts not connected above. Signs in through the ms-365-mcp-server with a device code."
+    text: "Optional. Reads delivery mails in your Microsoft 365 mailbox, read-only, to catch Amazon Orders from accounts not connected above and DHL numbers DHL doesn\u2019t list under your name. Mail never sets a Status. Signs in through the ms-365-mcp-server with a device code."
     color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.bodySmall
   }
 

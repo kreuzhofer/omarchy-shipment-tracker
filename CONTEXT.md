@@ -29,7 +29,7 @@ The company physically moving the Shipment. May differ from the Source, e.g. an 
 _Avoid_: Provider, courier
 
 **Connection**:
-One signed-in link the tracker reads Shipments through: the DHL account, one Amazon account, or the Microsoft 365 mailbox. A Source can have several Connections (Amazon with two accounts), and the mailbox is a Connection that feeds the Amazon Source. The Sources page lists Connections.
+One signed-in link the tracker reads Shipments through: the DHL account, one Amazon account, or the Microsoft 365 mailbox. A Source can have several Connections (Amazon with two accounts). The mailbox is a Connection that discovers and enriches but never decides a Status: it finds Amazon Orders and DHL tracking numbers, and what was shipped. The Sources page lists Connections.
 _Avoid_: Integration, login, account (on its own)
 
 **Health**:
@@ -68,6 +68,10 @@ The Shipment is on its way back to the sender. Not terminal.
 
 **Unknown**:
 The Source has no tracking information for the Shipment yet, e.g. a manually added number the Carrier does not know.
+
+**Mail hint**:
+What the last mail said about an Amazon Order only the mailbox knows, shown where the Status would be: "Shipped · per mail, 15 Sep", or **Status unknown** once the mail's Estimate is more than 3 days past with no newer mail. Not a Status: such an Order stays **Unknown** and never notifies, until an Amazon account reads it.
+_Avoid_: Mail status
 
 **Terminal Status**:
 A Status after which a Shipment no longer changes: **Delivered** (received by the recipient, for either Direction) or **Returned** (back with the sender).

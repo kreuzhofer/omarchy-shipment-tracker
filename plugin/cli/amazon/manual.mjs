@@ -5,6 +5,11 @@
 // whose orders list it owns it: its package Shipments take over, marked as
 // added by hand, and the Order-level Shipment goes. While every readable
 // account has said no, it is link-only.
+//
+// An Order only mail knows (mail/orders.mjs, #59) is looked for the same way,
+// by every account, so an account connected later takes over its row even
+// beyond history page 1. Its packages replace it through absorbMailOrders and
+// stay looked for (`fromMail`) until Terminal; it is never link-only.
 import { hasDhlSide, releaseToDhl } from "../merge.mjs";
 import { TERMINAL } from "../shipments.mjs";
 import { orderDetailsUrl } from "./pages.mjs";
@@ -16,6 +21,10 @@ const orderKey = (orderId) => `amazon:${orderId}`;
 const isAmazonConnection = (c) => c.startsWith("amazon:");
 const isOrderLevel = (s) => s.source === "Amazon" && s.key === orderKey(s.orderId);
 const isManual = (s) => s.source === "Amazon" && Boolean(s.orderId) && s.connections.includes("manual");
+const isMailOrder = (s) => isOrderLevel(s) && s.connections.includes("mail");
+// Order IDs an account looks for: manual ones, Orders only mail knows, and
+// the packages that took over from such a mail row.
+const lookedFor = (s) => isManual(s) || isMailOrder(s) || (s.source === "Amazon" && s.fromMail === true);
 const owner = (s) => s.connections.find(isAmazonConnection) ?? null;
 const text = (estimateText) => ({ from: null, to: null, text: estimateText });
 
@@ -58,12 +67,13 @@ export function addManualOrder(list, orderId, now) {
   return true;
 }
 
-// The Order IDs added by hand that the account `key` should look for: those it
-// owns that aren't Terminal yet, and unowned ones it hasn't been asked about.
+// The Order IDs (added by hand, or known from mail) that the account `key`
+// should look for: those it owns that aren't Terminal yet, and unowned ones it
+// hasn't been asked about.
 export function ordersToLookFor(list, key) {
   const ids = new Set();
   for (const s of list) {
-    if (!isManual(s) || TERMINAL.has(s.status)) continue;
+    if (!lookedFor(s) || TERMINAL.has(s.status)) continue;
     const by = owner(s);
     if (by === key || (by === null && !(s.probedBy ?? []).includes(key))) ids.add(s.orderId);
   }
@@ -77,7 +87,7 @@ export function ordersToLookFor(list, key) {
 // now, e.g. after history lag, so the Order never shows twice.
 export function applyOwnership(list, key, label, { owned = [], notOwned = [], readings = [] }) {
   const listed = readings.map((r) => r.orderId)
-    .filter((id) => list.some((s) => s.key === orderKey(id) && isOrderLevel(s) && isManual(s)));
+    .filter((id) => list.some((s) => s.key === orderKey(id) && isOrderLevel(s) && (isManual(s) || isMailOrder(s))));
   for (const orderId of new Set([...owned, ...listed])) {
     const order = list.find((s) => s.key === orderKey(orderId) && isOrderLevel(s));
     const packages = list.filter((s) => s.source === "Amazon" && s.orderId === orderId && s !== order);
@@ -87,15 +97,19 @@ export function applyOwnership(list, key, label, { owned = [], notOwned = [], re
       if (order) list.splice(list.indexOf(order), 1);
       continue;
     }
-    // Owned, but no package read yet (page cap, or not shipped).
+    // Owned, but no package read yet (page cap, or not shipped). A row mail
+    // knows keeps its hint until then.
     if (!order.connections.includes(key)) order.connections.push(key);
     order.account = label;
+    if (!isManual(order)) continue;
     order.linkOnly = false;
     order.estimate = text(LOOKING_UP);
   }
   for (const orderId of notOwned) {
     const order = list.find((s) => s.key === orderKey(orderId) && isOrderLevel(s) && owner(s) === null);
-    if (order && !order.probedBy.includes(key)) order.probedBy.push(key);
+    if (!order) continue;
+    order.probedBy ??= [];
+    if (!order.probedBy.includes(key)) order.probedBy.push(key);
   }
 }
 
@@ -131,6 +145,8 @@ export function releaseOwnership(list, key) {
       }
       continue;
     }
+    // A row mail knows loses the account that owned it.
+    if (lostAccount && isOrderLevel(s)) s.account = null;
     if (s.connections.length > 0) result.push(s);
   }
   return result;

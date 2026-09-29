@@ -80,7 +80,7 @@ Column {
     row: "mail"
     glyph: "\u{F01F0}"
     name: "Microsoft 365 mail"
-    subtitle: "optional · Amazon Orders from mail"
+    subtitle: "optional · Orders and DHL numbers from mail"
     summary: root.store ? Shipments.rowSummary(root.store.connection("mail"), !!root.login && root.login.key === "mail") : ""
     tone: root.toneOf(summary)
     MailSetup { width: parent.width; store: root.store; fg: root.fg; ff: root.ff }

@@ -45,6 +45,7 @@ function windowDay(s) {
 }
 
 function arrivingToday(s, nowMs) {
+  if (fromMail(s)) return false
   return s.status === "Out for delivery" || (windowDay(s) !== "" && windowDay(s) === localDay(nowMs))
 }
 
@@ -79,11 +80,26 @@ function age(iso, nowMs) {
 }
 
 // "DHL", "Amazon · Personal", "Amazon · Personal via DHL". Amazon Logistics
-// is Amazon's own Carrier, so it gets no "via".
+// is Amazon's own Carrier, so it gets no "via". An Order only mail knows:
+// "Amazon · from mail".
 function sourceLabel(s) {
   var label = s.source + (s.account ? " · " + s.account : "")
   if (s.carrier && s.carrier !== s.source && s.carrier.indexOf(s.source + " ") !== 0) label += " via " + s.carrier
-  return label
+  return fromMail(s) ? label + " · from mail" : label
+}
+
+// ---- Orders only mail knows (#59): mail never decides a Status, so the card
+// shows the last mail's hint ("Shipped · per mail, 15 Sep", later "Status
+// unknown") where the Status would be, and never counts towards "arriving today".
+
+function fromMail(s) {
+  return typeof s.hint === "string" && s.hint !== ""
+}
+
+// The card's Status line: glyph and Status, or the mail's hint.
+function statusLine(s) {
+  if (fromMail(s)) return "\u{F01F0}  " + s.hint // email-outline
+  return statusGlyph(s.status) + "  " + s.status
 }
 
 // ---- Direction tabs and progress cards (#52, variant C of #9)
@@ -124,8 +140,13 @@ function tabDot(tab, shipments, troubled) {
 }
 
 // An Outgoing card is titled with its recipient ("To Anna K."), unless DHL
-// named no one and the title fell back to the tracking number.
+// named no one and the title fell back to the tracking number. A DHL card
+// whose item a mail named shows the item, then the sender DHL names.
 function cardTitle(s) {
+  if (s.itemTitle) {
+    var sender = s.title && s.title !== s.trackingNumber && s.title !== s.itemTitle ? " · from " + s.title : ""
+    return s.itemTitle + sender
+  }
   if (s.direction !== "Outgoing" || !s.title || s.title === s.trackingNumber) return s.title || ""
   return "To " + s.title
 }
