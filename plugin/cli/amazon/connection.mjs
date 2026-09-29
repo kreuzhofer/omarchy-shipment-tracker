@@ -10,7 +10,7 @@
 // (one account's run takes about 40 s).
 import { mkdir, rm, stat } from "node:fs/promises";
 import { markKnown, recordEvents } from "../events.mjs";
-import { connectionRecord, recordFailure, recordOk } from "../health.mjs";
+import { connectionRecord, recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { withLock } from "../lock.mjs";
 import { nextAmazonPort } from "../ports.mjs";
 import { absorbDhlTwin, applyAmazonReading } from "../merge.mjs";
@@ -171,7 +171,11 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     }
     settleLinkOnly(shipments.shipments, sources.connections);
     finishRun(sources, at);
-    if (firstSync) recordEvents(shipments, { firstSync: new Set([key]) });
+    // A challenge met during the Login's first sync is announced right away.
+    if (firstSync) {
+      recordEvents(shipments, { firstSync: new Set([key]) });
+      recordConnectionEvents(shipments, sources);
+    }
   });
   log(`refresh: amazon read ${result.pages} page(s), ${readings.length} Shipment(s)`
     + `${result.unmapped ? `, ${result.unmapped} unmapped` : ""}${reason ? `, stopped: ${reason}` : ""}`);

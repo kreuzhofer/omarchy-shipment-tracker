@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fakeChrome, fakeDhl, fakeDhlAccount, fixture, makeWorld } from "./harness.mjs";
-import { historyPage, signInPage } from "./fixtures/amazon/pages.mjs";
+import { captchaPage, historyPage, signInPage, trackerPage } from "./fixtures/amazon/pages.mjs";
 
 const ALL = ["00340434000000000101", "00340434000000000102", "00340434000000000103", "00340434000000000104"];
 const MANUAL = "00340434000000000033";
@@ -329,6 +329,36 @@ test("an Amazon account that loses its session emits one event naming its label"
 
   // Not polled while needs-login, and not announced again.
   await refreshAt(world, "2026-09-29T12:00:00.000Z");
+  assert.deepEqual(await connectionEvents(world), []);
+});
+
+test("a challenge during an Amazon Login's first sync is announced right away, once", async (t) => {
+  const ORDER = "301-0000000-0000001";
+  const routes = {
+    history: historyPage([{ orderId: ORDER, shipments: [{ packageIndex: 0, shipmentId: "Taaaaaaaa", title: "Ein Kabel" }] }]),
+    trackers: { [`${ORDER}#0`]: captchaPage() },
+  };
+  const world = await makeWorld({ chrome: fakeChrome(routes), transport: fakeDhl({}) });
+  t.after(() => world.cleanup());
+  await world.run("accounts", "add", "Business", "--accept-risk");
+
+  world.setClock("2026-09-29T10:30:00.000Z");
+  await world.run("login", "amazon:Business");
+
+  const conn = (await world.sourcesFile()).connections["amazon:Business"];
+  assert.deepEqual({ health: conn.health, reason: conn.reason }, { health: "needs-login", reason: "challenge" });
+  const events = await connectionEvents(world);
+  assert.deepEqual(events.map((e) => ({ connection: e.connection, reason: e.reason, title: e.title, body: e.body })), [{
+    connection: "amazon:Business",
+    reason: "challenge",
+    title: "Amazon · Business needs a login",
+    body: "Amazon · Business asks for a security check",
+  }]);
+  assert.equal((await world.shipmentsFile()).lastEventId, events[0].id);
+
+  // The next refresh doesn't announce it again.
+  routes.trackers[`${ORDER}#0`] = trackerPage({ orderId: ORDER, packageIndex: "0", shortStatus: "IN_TRANSIT" });
+  await refreshAt(world, "2026-09-29T11:00:00.000Z");
   assert.deepEqual(await connectionEvents(world), []);
 });
 
