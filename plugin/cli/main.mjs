@@ -4,12 +4,13 @@
 // deps: { env, now: () => Date, transport: { fetch }, log(line), out(line), exec? }
 // Logs carry counts and Health only, never tracking numbers, names or addresses.
 import { refresh } from "./refresh.mjs";
-import { manualDhlShipment, parseManualId } from "./shipments.mjs";
+import { manualDhlShipment, parseManualId, removeManual } from "./shipments.mjs";
 import { stateDirFor, updateState } from "./state.mjs";
 import { install, uninstall } from "./systemd.mjs";
 
 const USAGE = `usage: shipment-tracker <command>
   add <trackingNumber>   track a DHL tracking number by hand
+  remove <shipmentKey>   stop tracking a Shipment added by hand
   refresh                one refresh run
   install                install the hourly refresh timer (idempotent)
   uninstall              remove the refresh timer and service`;
@@ -20,6 +21,8 @@ export async function main(argv, deps) {
   switch (command) {
     case "add":
       return add(args, stateDir, deps);
+    case "remove":
+      return remove(args, stateDir, deps);
     case "refresh":
       return refresh({ stateDir, now: deps.now, transport: deps.transport, log: deps.log });
     case "install":
@@ -53,5 +56,19 @@ async function add(args, stateDir, { now, log, out }) {
     return true;
   });
   out(added ? "Added 1 Shipment" : "Already tracked");
+  return 0;
+}
+
+async function remove(args, stateDir, { log, out }) {
+  if (args.length !== 1) {
+    log("usage: shipment-tracker remove <shipmentKey>");
+    return 2;
+  }
+  const error = await updateState(stateDir, ({ shipments }) => removeManual(shipments, args[0]));
+  if (error) {
+    log(`remove: ${error}`);
+    return 2;
+  }
+  out("Removed 1 Shipment");
   return 0;
 }

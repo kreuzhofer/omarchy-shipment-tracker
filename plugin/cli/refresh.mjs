@@ -18,6 +18,8 @@ const needsLookup = (s) => s.source === "DHL" && s.connections.includes("manual"
 export async function refresh({ stateDir, now, transport, log }) {
   const attempted = new Set();
   const counts = { lookedUp: 0, unknown: 0, failed: 0, network: 0 };
+  // The header reads "Refreshing…" while this is set.
+  await updateState(stateDir, ({ sources }) => { sources.refreshing = { startedAt: now().toISOString() }; });
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const snapshot = await readState(stateDir);

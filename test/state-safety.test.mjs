@@ -64,3 +64,21 @@ test("logs and output carry counts only, never tracking numbers", async (t) => {
   assert.ok(world.logs.length > 0);
   for (const secret of ["00340434", "302-0000000"]) assert.ok(!printed.includes(secret), `leaked in: ${printed}`);
 });
+
+test("sources.json marks a run as refreshing while it is active", async (t) => {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const world = await makeWorld({
+    transport: fakeDhl({ [FIRST]: async () => { await held; return { json: fixture("dhl/in-transit.json") }; } }),
+  });
+  t.after(() => world.cleanup());
+  await world.run("add", FIRST);
+
+  const running = world.run("refresh");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual((await world.sourcesFile()).refreshing, { startedAt: "2026-09-29T10:00:00.000Z" });
+  release();
+  assert.equal(await running, 0);
+
+  assert.equal((await world.sourcesFile()).refreshing, null);
+});
