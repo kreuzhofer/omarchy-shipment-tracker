@@ -15,6 +15,7 @@ import { markKnown, recordEvents } from "../events.mjs";
 import { absorbMailOrders } from "../mail/connection.mjs";
 import { connectionRecord, recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { withLock } from "../lock.mjs";
+import { hasExtensions, HINT_URL, recordExtensions } from "../login-hint.mjs";
 import { runLogin } from "../logins.mjs";
 import { nextAmazonPort } from "../ports.mjs";
 import { absorbDhlTwin, applyAmazonReading } from "../merge.mjs";
@@ -244,6 +245,8 @@ export async function loginAmazon(label, deps) {
     });
     return 0;
   });
+  // A password manager installed in the window counts from now on (#51).
+  await recordExtensions(deps.stateDir, deps.env, [key]);
   return result;
 }
 
@@ -264,6 +267,9 @@ async function signIn(label, { stateDir, env, now, chrome, sleep, timeZone, log 
     if (e.code === "busy" || e.code === "browser") return "browser";
     throw e;
   }
+  // The password-manager hint tab, while the profile has no extension; only
+  // this visible window ever opens it, never the hidden refresh.
+  if (!(await hasExtensions(profileDir))) await tab.openBackgroundTab(HINT_URL).catch(() => {});
   let handedOver = false;
   try {
     const signedIn = await waitForSignIn(tab, { now, sleep, deadline, signal: handle.signal });

@@ -63,6 +63,15 @@ Column {
     }
   }
 
+  // No password manager in the login profile yet (#51).
+  Text {
+    visible: !root.loggingIn && (root.health === "not-set-up" || root.health === "needs-login") && !(root.connection && root.connection.hasExtensions)
+    width: root.width
+    wrapMode: Text.WordWrap
+    text: "Tip: install your password manager once in the login window; it stays there for later logins."
+    color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.caption
+  }
+
   RemoveConfirm {
     width: root.width
     store: root.store; fg: root.fg; ff: root.ff
