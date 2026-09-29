@@ -4,6 +4,7 @@
 // IPC, for screenshot checks:
 //   omarchy-shell kreuzhofer.shipment-tracker show|hide|toggle
 //   omarchy-shell kreuzhofer.shipment-tracker refresh    start the refresh service
+//   omarchy-shell kreuzhofer.shipment-tracker add <n>    same as the footer add field
 import QtQuick
 import Quickshell.Io
 import qs.Commons
@@ -41,6 +42,7 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): void { backend.refresh() }
+    function add(text: string): void { backend.add(text) }
   }
 
   KeyboardPanel {

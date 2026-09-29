@@ -50,6 +50,7 @@ Item {
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.shipmentsState = root.parse(text(), root.shipmentsState)
+    onLoadFailed: root.shipmentsState = ({ shipments: [], events: [] })
   }
 
   FileView {
@@ -59,6 +60,7 @@ Item {
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.sourcesState = root.parse(text(), root.sourcesState)
+    onLoadFailed: root.sourcesState = ({ lastRun: null, refreshing: null, offline: false, connections: {} })
   }
 
   function reloadFiles() {
