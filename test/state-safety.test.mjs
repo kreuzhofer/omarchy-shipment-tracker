@@ -75,8 +75,14 @@ test("sources.json marks a run as refreshing while it is active", async (t) => {
   await world.run("add", FIRST);
 
   const running = world.run("refresh");
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual((await world.sourcesFile()).refreshing, { startedAt: "2026-09-29T10:00:00.000Z" });
+  // The lookup is held, so the run stays active; wait for its first write
+  // (a fixed 20 ms was too short on a busy machine).
+  let refreshing = null;
+  for (let i = 0; i < 200 && !refreshing; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    refreshing = await world.sourcesFile().then((f) => f.refreshing, () => null);
+  }
+  assert.deepEqual(refreshing, { startedAt: "2026-09-29T10:00:00.000Z" });
   release();
   assert.equal(await running, 0);
 
