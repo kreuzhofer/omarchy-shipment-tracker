@@ -31,6 +31,7 @@ import { KEY as MAIL, refreshMail } from "./mail/connection.mjs";
 import { clearUpdatedDismissals } from "./dismiss.mjs";
 import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
 import { recordConnectionEvents, recordFailure } from "./health.mjs";
+import { recordExtensions } from "./login-hint.mjs";
 import { clearStaleLogins } from "./logins.mjs";
 import { applyDhlReading, carriedByDhl } from "./merge.mjs";
 import { applyRetention } from "./retention.mjs";
@@ -163,6 +164,8 @@ export async function refresh({ stateDir, env, now, transport, chrome, mcp, slee
     const told = recordEvents(state.shipments, { firstSync: quiet }) + recordConnectionEvents(state.shipments, state.sources);
     return { told, dropped };
   });
+  // Whether each login profile has a password manager yet (see login-hint.mjs).
+  await recordExtensions(stateDir, env);
   if (dropped > 0) log(`refresh: ${dropped} Shipment(s) past retention dropped`);
   if (told > 0) log(`refresh: ${told} notification event(s)`);
 

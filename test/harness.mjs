@@ -2,7 +2,7 @@
 // `shipment-tracker` entry point against a temp state dir, a fixed clock and
 // fake transports, then look only at shipments.json, sources.json and events[].
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -55,7 +55,9 @@ const CDP_ALLOWED = new Set([
 // profile directory Chrome is launched with.
 // Options: launchFails (Chrome doesn't come up), busy (port already in use).
 // Records launches, CDP methods, navigations (with the account's label) and
-// reads with the world clock, and `overlapped` when two Chromes were up at once.
+// reads with the world clock, the tabs opened with Target.createTarget
+// (`targets`: { url, background }), and `overlapped` when two Chromes were up
+// at once.
 export function fakeChrome(allRoutes = {}, { launchFails = false, busy = false } = {}) {
   const fake = {
     clock: () => new Date(0),
@@ -63,6 +65,7 @@ export function fakeChrome(allRoutes = {}, { launchFails = false, busy = false }
     methods: [],
     navigations: [],
     reads: [],
+    targets: [],
     hidden: false,
     open: false,
     overlapped: false,
@@ -114,6 +117,9 @@ export function fakeChrome(allRoutes = {}, { launchFails = false, busy = false }
             case "Target.getTargets": return { targetInfos: [{ targetId: "T1", type: "page", url: "about:blank" }] };
             case "Target.attachToTarget": return { sessionId: "S1" };
             case "Page.enable": return {};
+            case "Target.createTarget":
+              fake.targets.push({ url: params.url, background: params.background === true });
+              return { targetId: `T${fake.targets.length + 1}` };
             case "Page.navigate": {
               fake.navigations.push({ url: params.url, at: fake.clock().getTime(), account: label });
               route = resolve(params.url);
@@ -285,16 +291,21 @@ function answer(r) {
 // authorize request's state. outcome: "success" | "cancelled" | "timed-out" | "browser",
 // or "open": the window stays open until the Login is cancelled (its signal)
 // or the test calls finish(outcome). `opened` resolves once a window is open;
-// `timeoutMs` records the deadline it was given.
+// `timeoutMs` records the deadline it was given. `targets` records the tabs
+// the window opened ({ url, background }): the login page, and the hint tab
+// when asked for one (`hintUrl`).
 export function fakeBrowser({ outcome = "success", code = "fake-code" } = {}) {
   let markOpened;
   const browser = {
     outcome,
     launches: [],
+    targets: [],
     opened: new Promise((resolve) => { markOpened = resolve; }),
     finish: () => {},
-    async catchRedirect({ url, profileDir, redirectPrefix, timeoutMs, signal }) {
+    async catchRedirect({ url, profileDir, redirectPrefix, timeoutMs, signal, hintUrl }) {
       browser.launches.push({ url, profileDir, timeoutMs });
+      browser.targets.push({ url, background: false });
+      if (hintUrl) browser.targets.push({ url: hintUrl, background: true });
       if (browser.outcome === "open") {
         browser.outcome = await new Promise((resolve) => {
           browser.finish = resolve;
@@ -308,6 +319,14 @@ export function fakeBrowser({ outcome = "success", code = "fake-code" } = {}) {
     },
   };
   return browser;
+}
+
+// Installs a Chrome extension into a login profile, as the Chrome Web Store
+// does: <profile>/Default/Extensions/<id>/<version>/manifest.json.
+export async function installExtension(profileDir, id = "abcdefghijklmnopabcdefghijklmnop") {
+  const dir = join(profileDir, "Default/Extensions", id, "1.0.0_0");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "manifest.json"), JSON.stringify({ name: "A password manager", version: "1.0.0" }));
 }
 
 // Holds an exclusive flock on `path` (a file or directory) from another

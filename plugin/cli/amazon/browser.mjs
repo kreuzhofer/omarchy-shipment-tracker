@@ -5,7 +5,9 @@
 // loopback debugging port. Never headless, never automation flags, never
 // `--remote-debugging-pipe` or port 0 (each sets navigator.webdriver). The CDP
 // session only navigates and reads DOM.getOuterHTML: no Runtime domain, no
-// injected script, no emulation or UA overrides.
+// injected script, no emulation or UA overrides. A Login may also open a
+// local page in a background tab (the password-manager hint, #51), which the
+// session never attaches to.
 //
 // `chrome` (deps.chrome) is the transport: launch({ args, port, hidden }) →
 // { send(method, params, sessionId), onEvent(fn) → off, closed, hide(), close() }.
@@ -79,6 +81,11 @@ class AccountTab {
       off();
       clearTimeout(timer);
     }
+  }
+
+  // Opens `url` in a second tab without switching to it; this tab stays active.
+  async openBackgroundTab(url) {
+    await this.browser.send("Target.createTarget", { url, background: true });
   }
 
   async url() {

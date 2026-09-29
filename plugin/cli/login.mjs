@@ -9,6 +9,7 @@
 // returnTo, one at a time) is logins.mjs's; this is one attempt inside it.
 import { join } from "node:path";
 import { authorizeRequest, exchangeCode, readRedirect, REDIRECT_PREFIX } from "./dhl/auth.mjs";
+import { hasExtensions, HINT_URL, recordExtensions } from "./login-hint.mjs";
 import { runLogin } from "./logins.mjs";
 import { refresh } from "./refresh.mjs";
 
@@ -30,18 +31,24 @@ export async function login(args, stateDir, deps) {
     deps.log("usage: shipment-tracker login dhl");
     return 2;
   }
-  return runLogin(key, { stateDir, ...deps }, (handle) => attempt(stateDir, deps, handle));
+  const code = await runLogin(key, { stateDir, ...deps }, (handle) => attempt(stateDir, deps, handle));
+  // A password manager installed in the window counts from now on (#51).
+  await recordExtensions(stateDir, deps.env, [key]);
+  return code;
 }
 
 async function attempt(stateDir, deps, handle) {
   const request = authorizeRequest();
   deps.log("login: a Chrome window opens on the DHL login; log in there (2FA if asked). It closes by itself.");
   const deadline = await handle.window();
+  const profileDir = join(dataDirFor(deps.env), "dhl");
   let redirectUrl;
   try {
     redirectUrl = await deps.browser.catchRedirect({
       url: request.url,
-      profileDir: join(dataDirFor(deps.env), "dhl"),
+      profileDir,
+      // The password-manager hint tab, while the profile has no extension.
+      hintUrl: await hasExtensions(profileDir) ? null : HINT_URL,
       redirectPrefix: REDIRECT_PREFIX,
       timeoutMs: Math.max(0, deadline.getTime() - deps.now().getTime()),
       signal: handle.signal,
@@ -64,5 +71,5 @@ async function attempt(stateDir, deps, handle) {
   handle.outcome = "ok";
   await handle.syncing();
   deps.log("login: dhl logged in, running its first sync");
-  return refresh({ stateDir, now: deps.now, transport: deps.transport, exec: deps.exec, log: deps.log, source: "dhl", firstSync: true });
+  return refresh({ stateDir, env: deps.env, now: deps.now, transport: deps.transport, exec: deps.exec, log: deps.log, source: "dhl", firstSync: true });
 }

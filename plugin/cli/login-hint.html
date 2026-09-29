@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- The password-manager hint (#51): opened by the Shipment Tracker in a
+     background tab of a Login window while its profile has no extension.
+     Static on purpose: no script. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Use your password manager here</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6f4; --fg: #1d1d1b; --muted: #5d5d58; --accent: #1a5fb4; --card: #ffffff; --line: #deded9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1b1d; --fg: #e8e8e6; --muted: #a3a39e; --accent: #78aeed; --card: #242427; --line: #38383c; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 36rem; margin: 12vh auto; padding: 2rem; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  h1 { font-size: 1.4rem; margin: 0 0 0.75rem; }
+  p { margin: 0 0 1rem; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  a.button { display: inline-block; margin: 0.5rem 0 1.25rem; padding: 0.6rem 1.1rem; border-radius: 8px; background: var(--accent); color: var(--bg); font-weight: 600; text-decoration: none; }
+  a.button:hover { filter: brightness(1.1); }
+  @media (max-width: 40rem) { main { margin: 1rem; padding: 1.25rem; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Use your password manager here: install it once in this login profile</h1>
+  <p>The Shipment Tracker signs in through its own Chrome profile, separate from your everyday browser, so your password manager isn't here yet. Install it in this window once; it stays for every later login.</p>
+  <a class="button" href="https://chromewebstore.google.com/detail/lastpass-free-password-ma/hdokiejnpimakedhajhdlcegeplioahd">Get LastPass from the Chrome Web Store</a>
+  <p class="muted">Any password-manager extension works, e.g. 1Password or Bitwarden. Once one is installed, this tab no longer opens. The login page is the other tab.</p>
+</main>
+</body>
+</html>

@@ -122,6 +122,14 @@ Column {
           text: account.line
           color: root.muted; font.family: root.ff; font.pixelSize: Style.font.caption
         }
+        // No password manager in the login profile yet (#51).
+        Text {
+          visible: !account.loggingIn && (account.health === "not-set-up" || account.health === "needs-login") && !(account.c && account.c.hasExtensions)
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: "Tip: install your password manager once in the login window; it stays there for later logins."
+          color: root.muted; font.family: root.ff; font.pixelSize: Style.font.caption
+        }
         Text {
           visible: !!root.login && !account.loggingIn && (account.health === "not-set-up" || account.health === "needs-login")
           width: parent.width

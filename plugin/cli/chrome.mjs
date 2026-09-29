@@ -10,6 +10,11 @@
 // rejects with code "cancelled" when the user closes the window or `signal`
 // aborts (Cancel), "timed-out" after `timeoutMs`, or "browser" when Chrome or
 // CDP doesn't come up.
+//
+// With `hintUrl` (the password-manager hint, see login-hint.mjs) it also opens
+// that page in a second tab, in the background (Target.createTarget with
+// background: true) once the login page's tab exists, so the login page stays
+// the active tab. No script is injected anywhere.
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { DHL_LOGIN_PORT } from "./ports.mjs";
@@ -21,7 +26,7 @@ const fail = (code, message) => Object.assign(new Error(message), { code });
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const chromeBrowser = {
-  async catchRedirect({ url, profileDir, redirectPrefix, timeoutMs, signal, port = DHL_LOGIN_PORT }) {
+  async catchRedirect({ url, profileDir, redirectPrefix, timeoutMs, signal, hintUrl = null, port = DHL_LOGIN_PORT }) {
     await mkdir(profileDir, { recursive: true, mode: 0o700 });
     let chrome;
     try {
@@ -44,7 +49,7 @@ export const chromeBrowser = {
     const wsUrl = await devtoolsUrl(port);
     const ws = new WebSocket(wsUrl);
     try {
-      return await watch(ws, new RegExp(`${escapeRegExp(redirectPrefix)}[^"'\\s\\\\]*`), timeoutMs, signal);
+      return await watch(ws, new RegExp(`${escapeRegExp(redirectPrefix)}[^"'\\s\\\\]*`), timeoutMs, signal, hintUrl);
     } finally {
       await closeBrowser(ws, chrome);
     }
@@ -64,12 +69,19 @@ async function devtoolsUrl(port) {
   throw fail("browser", "Chrome's DevTools endpoint did not come up");
 }
 
-function watch(ws, pattern, timeoutMs, signal) {
+function watch(ws, pattern, timeoutMs, signal, hintUrl) {
   return new Promise((resolve, reject) => {
     let id = 0;
     let settled = false;
     const pages = new Set();
     let sawPage = false;
+    let hintOpened = !hintUrl;
+    // Once the login page's tab exists, so the hint lands in the same window.
+    const openHint = () => {
+      if (hintOpened) return;
+      hintOpened = true;
+      send("Target.createTarget", { url: hintUrl, background: true });
+    };
     const send = (method, params = {}, sessionId) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: ++id, method, params, ...(sessionId ? { sessionId } : {}) }));
     };
@@ -113,6 +125,7 @@ function watch(ws, pattern, timeoutMs, signal) {
       } else if (m.method === "Target.targetCreated" && m.params.targetInfo.type === "page") {
         pages.add(m.params.targetInfo.targetId);
         sawPage = true;
+        openHint();
       } else if (m.method === "Target.targetDestroyed" && pages.delete(m.params.targetId) && sawPage && pages.size === 0) {
         settle(reject, fail("cancelled", "the login window was closed"));
       } else if (m.result?.targetInfos) {
@@ -122,6 +135,7 @@ function watch(ws, pattern, timeoutMs, signal) {
           sawPage = true;
           if (!t.attached) send("Target.attachToTarget", { targetId: t.targetId, flatten: true });
         }
+        if (sawPage) openHint();
       }
     };
   });
