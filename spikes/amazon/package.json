@@ -1,0 +1,10 @@
+{
+  "name": "amazon-discovery-spike",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway spike for issue #8. Not production code.",
+  "dependencies": {
+    "@softeria/ms-365-mcp-server": "0.156.2",
+    "cheerio": "^1.2.0"
+  }
+}
