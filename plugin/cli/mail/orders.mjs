@@ -12,6 +12,8 @@
 //   (absorbMailOrders), quietly when the row was already shown.
 // - A DHL number found in mail becomes a watched DHL Shipment, like a manual
 //   add (addMailNumbers), with what the mail says about the item.
+// - A DHL Shipment the list already has gets its item from the mail a search
+//   for its number found (applyItemSearches), once.
 import { orderDetailsUrl } from "../amazon/pages.mjs";
 import { localDate } from "../amazon/status.mjs";
 import { markOf } from "../dismiss.mjs";
@@ -75,13 +77,23 @@ export function applyMailOrders(shipments, orders, dropped, now, timeZone) {
       list.push(s);
     }
     if (!s.connections.includes(KEY)) s.connections.push(KEY);
+    // A row from before #59 is migrated before this mail is applied, else
+    // its mail Status would stay (the migration below only sees rows the
+    // mailbox no longer names).
+    const legacy = isLegacy(s) ? { changedAt: s.changedAt } : null;
+    if (legacy) migrate(s, now, timeZone);
     s.probedBy ??= [];
     if (order.title) s.title = order.title;
     s.mail = { step: order.step, at: order.at, estimate: order.estimate };
-    // A newer mail is a real update for a dismissed row (dismiss.mjs).
+    // A newer mail is a real update for a dismissed row (dismiss.mjs); the
+    // mail the migration stands in for is not, nor a change of the row.
     s.trackingEvent = `mail@${order.at}`;
     s.lastSeenAt = at;
     settleHint(s, now, timeZone);
+    if (legacy) {
+      s.changedAt = legacy.changedAt;
+      if (s.dismissedAt) s.dismissedAs = markOf(s);
+    }
   }
 }
 
@@ -91,7 +103,7 @@ export function applyMailOrders(shipments, orders, dropped, now, timeZone) {
 export function settleMailOrders(shipments, now, timeZone) {
   for (const s of shipments.shipments) {
     if (!isMailOrder(s)) continue;
-    if (!s.mail) migrate(s, now, timeZone);
+    if (isLegacy(s)) migrate(s, now, timeZone);
     settleHint(s, now, timeZone);
   }
   absorbMailOrders(shipments.shipments);
@@ -99,10 +111,14 @@ export function settleMailOrders(shipments, now, timeZone) {
 
 // Before #59 the sender decided the row's Status. It becomes the hint's step;
 // the row keeps its title, Estimate and dates. Nothing is announced, and a
-// dismissed row stays dismissed.
+// dismissed row stays dismissed. An Order-level row mail knows never has a
+// Status of its own (an account's readings are package rows), so any Status
+// is mail's: also on rows #65's first runs half-migrated (a `mail` hint, but
+// the old Status kept, Terminal ones included).
 const LEGACY_STEPS = { Announced: "Ordered", "In transit": "Shipped", "Out for delivery": "Out for delivery", Delivered: "Delivered" };
+const isLegacy = (s) => !s.mail || s.status !== "Unknown";
 function migrate(s, now, timeZone) {
-  s.mail = {
+  s.mail ??= {
     step: LEGACY_STEPS[s.status] ?? null,
     at: s.lastSeenAt ?? s.changedAt,
     estimate: s.status === "Delivered" || !s.estimate?.from ? null : { from: s.estimate.from, to: s.estimate.to ?? s.estimate.from },
@@ -157,9 +173,29 @@ export function addMailNumbers(shipments, numbers, dropped, now) {
     if (isDropped(dropped, `dhl:${trackingNumber}`) || findByTrackingNumber(shipments.shipments, trackingNumber)) continue;
     const s = manualDhlShipment(trackingNumber, now);
     s.connections = [KEY];
+    // Its mail already went through the item ladder: no search for it.
+    s.mailSearchedAt = now.toISOString();
     if (item) Object.assign(s, item);
     shipments.shipments.push(s);
     added++;
   }
   return added;
+}
+
+// The searches for tracking numbers (connection.mjs), under the state lock:
+// each DHL Shipment searched for is marked, so it's never searched again, and
+// gets the item the mail names. Nothing else changes: not the Status, nor
+// the last change, nor anything that notifies. Returns how many got an item.
+export function applyItemSearches(shipments, searched, now) {
+  let named = 0;
+  for (const { trackingNumber, item } of searched) {
+    const s = shipments.shipments.find((x) => x.key === `dhl:${trackingNumber}`);
+    if (!s || s.itemTitle) continue;
+    s.mailSearchedAt = now.toISOString();
+    if (item) {
+      Object.assign(s, item);
+      named++;
+    }
+  }
+  return named;
 }

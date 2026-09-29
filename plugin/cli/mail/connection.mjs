@@ -12,6 +12,11 @@
 //   comes from that mail (item.mjs), read as HTML in a second, short server
 //   session when there is something new; that session failing only costs the
 //   item info.
+// Then, for DHL Shipments the list already has without item info (listed by
+// DHL's Sendungsliste, say), one search each for the tracking number, at most
+// MAX_SEARCHES per run and never repeated (`mailSearchedAt`); the mail that
+// names the number goes through the same item ladder (#70, the #54 plan).
+// It only ever sets `itemTitle` / `itemSource`.
 //
 // A mailbox that can't be read only changes this Connection's Health; it
 // never stops the other Sources. Health follows health.mjs: Softeria finding
@@ -24,11 +29,12 @@ import { recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { runLogin } from "../logins.mjs";
 import { findByTrackingNumber } from "../merge.mjs";
 import { droppedKeys, isDropped } from "../retention.mjs";
+import { TERMINAL } from "../shipments.mjs";
 import { readState, updateState } from "../state.mjs";
 import { itemInfo } from "./item.mjs";
 import { lastAuthDetail, openServer, removeFiles, tightenFiles } from "./mcp.mjs";
 import { findNumbers } from "./numbers.mjs";
-import { addMailNumbers, applyMailOrders, KEY, settleMailOrders } from "./orders.mjs";
+import { addMailNumbers, applyItemSearches, applyMailOrders, KEY, settleMailOrders } from "./orders.mjs";
 import { readMails } from "./status.mjs";
 
 export { absorbMailOrders, KEY } from "./orders.mjs";
@@ -39,6 +45,11 @@ const DHL_SEARCH = { search: '"DHL"', select: SELECT, top: 50 };
 const DHL_WINDOW_DAYS = 14;
 // HTML bodies fetched per run for the item ladder; more new numbers wait.
 const MAX_ITEM_MAILS = 5;
+// Searches for the number of a Shipment without item info, per run; a
+// Terminal Shipment only while it turned Terminal in the last few days.
+const MAX_SEARCHES = 5;
+const SEARCH_TERMINAL_DAYS = 7;
+const SEARCH_TOP = 5;
 const POLL_MS = 5000;
 
 // Why a tool call failed, from its answer (and, for a failed silent token
@@ -69,9 +80,45 @@ async function search(server, stateDir, args) {
   return Array.isArray(messages) ? { messages } : { reason: "shape" };
 }
 
-// Reads the mailbox: { ok: true, orders, numbers, ignored } or { ok: false, reason }.
+// The tracking numbers of DHL Shipments to search the mailbox for: no item
+// info and not searched yet; not Terminal, or Terminal since less than 7
+// days. Not Terminal first, then the newest.
+function numbersToSearch(list, now) {
+  const since = daysBefore(now, SEARCH_TERMINAL_DAYS).getTime();
+  const recent = (s) => !TERMINAL.has(s.status) || Date.parse(s.terminalAt ?? s.changedAt) >= since;
+  return list
+    .filter((s) => s.source === "DHL" && s.trackingNumber && !s.itemTitle && !s.mailSearchedAt && recent(s))
+    .sort((a, b) => (TERMINAL.has(a.status) - TERMINAL.has(b.status)) || String(b.discoveredAt).localeCompare(String(a.discoveredAt)))
+    .slice(0, MAX_SEARCHES)
+    .map((s) => s.trackingNumber);
+}
+
+// One search per number: [{ trackingNumber, message }], `message` the latest
+// mail naming the number verbatim, or null. A search that fails is left for
+// the next run; the first one failing ends the searches of this run.
+async function searchNumbers(server, stateDir, numbers) {
+  const results = [];
+  for (const trackingNumber of numbers) {
+    let answer;
+    try {
+      answer = await search(server, stateDir, { search: `"${trackingNumber}"`, select: SELECT, top: SEARCH_TOP });
+    } catch (e) {
+      if (e.code !== "server") throw e;
+      break;
+    }
+    if (answer.reason) break;
+    const names = (m) => `${m?.subject ?? ""}\n${typeof m?.body?.content === "string" ? m.body.content : ""}`.toUpperCase().includes(trackingNumber);
+    const message = answer.messages.filter(names)
+      .sort((a, b) => Date.parse(b.receivedDateTime) - Date.parse(a.receivedDateTime))[0] ?? null;
+    results.push({ trackingNumber, message });
+  }
+  return results;
+}
+
+// Reads the mailbox: { ok: true, orders, numbers, searched, ignored } or { ok: false, reason }.
 // `known(trackingNumber)`: already tracked, so no item info is needed.
-async function readMailbox({ stateDir, mcp, now, timeZone, known }) {
+// `toSearch`: tracking numbers of Shipments to search the mailbox for.
+async function readMailbox({ stateDir, mcp, now, timeZone, known, toSearch }) {
   let server;
   try {
     server = await openServer(mcp, stateDir);
@@ -82,9 +129,11 @@ async function readMailbox({ stateDir, mcp, now, timeZone, known }) {
   }
   let amazon;
   let dhl;
+  let searched = [];
   try {
     amazon = await search(server, stateDir, AMAZON_SEARCH);
     if (!amazon.reason) dhl = await search(server, stateDir, DHL_SEARCH);
+    if (!amazon.reason && !dhl.reason) searched = await searchNumbers(server, stateDir, toSearch);
   } catch (e) {
     if (e.code !== "server") throw e;
     return { ok: false, reason: "server" };
@@ -94,14 +143,17 @@ async function readMailbox({ stateDir, mcp, now, timeZone, known }) {
   const reason = amazon.reason ?? dhl.reason;
   if (reason) return { ok: false, reason };
   const numbers = findNumbers(dhl.messages, daysBefore(now(), DHL_WINDOW_DAYS)).filter((n) => !known(n.trackingNumber));
-  await addItemInfo(numbers, { stateDir, mcp });
-  return { ok: true, ...readMails(amazon.messages, daysBefore(now(), AMAZON_WINDOW_DAYS), timeZone), numbers };
+  await addItemInfo(numbers, searched, { stateDir, mcp });
+  return { ok: true, ...readMails(amazon.messages, daysBefore(now(), AMAZON_WINDOW_DAYS), timeZone), numbers, searched };
 }
 
-// The item ladder for each new number, on the mail's HTML body when it can be
-// fetched (Softeria's list gives text bodies), else on its subject.
-async function addItemInfo(numbers, { stateDir, mcp }) {
-  const ids = [...new Set(numbers.map((n) => n.message.id).filter(Boolean))].slice(0, MAX_ITEM_MAILS);
+// The item ladder for each new number and each number searched for, on the
+// mail's HTML body when it can be fetched (Softeria's list gives text
+// bodies), else on its subject. Up to MAX_ITEM_MAILS bodies for new numbers,
+// plus one per number searched for (at most MAX_SEARCHES).
+async function addItemInfo(numbers, searched, { stateDir, mcp }) {
+  const idsOf = (list) => list.map((n) => n.message?.id).filter(Boolean);
+  const ids = [...new Set([...idsOf(numbers).slice(0, MAX_ITEM_MAILS), ...idsOf(searched)])];
   const html = new Map();
   if (ids.length > 0) {
     let server = null;
@@ -118,8 +170,8 @@ async function addItemInfo(numbers, { stateDir, mcp }) {
       await server?.close().catch(() => {});
     }
   }
-  for (const n of numbers) {
-    n.item = itemInfo(n.message, n.trackingNumber, html.get(n.message.id) ?? null);
+  for (const n of [...numbers, ...searched]) {
+    n.item = n.message ? itemInfo(n.message, n.trackingNumber, html.get(n.message.id) ?? null) : null;
     delete n.message;
   }
 }
@@ -133,7 +185,8 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
   if (!firstSync && (conn.health === "not-set-up" || conn.login)) return;
   const dropped = droppedKeys(shipments);
   const known = (n) => isDropped(dropped, `dhl:${n}`) || Boolean(findByTrackingNumber(shipments.shipments, n));
-  const outcome = await readMailbox({ stateDir, mcp, now, timeZone, known });
+  const toSearch = numbersToSearch(shipments.shipments, now());
+  const outcome = await readMailbox({ stateDir, mcp, now, timeZone, known, toSearch });
   if (outcome.ok) counts.synced++;
   else {
     counts.failed++;
@@ -142,6 +195,7 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
   // Offline is not an error: a network failure counts once something else
   // in the run got through (else refresh.mjs counts it at the end, if so).
   const countNetwork = firstSync || counts.lookedUp > 0 || counts.synced > 0;
+  let named = 0;
   const added = await updateState(stateDir, ({ shipments, sources }) => {
     const c = sources.connections?.[KEY];
     const at = now();
@@ -160,6 +214,7 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
       const dropped = droppedKeys(shipments);
       applyMailOrders(shipments, outcome.orders, dropped, at, timeZone);
       count = addMailNumbers(shipments, outcome.numbers, dropped, at);
+      named = applyItemSearches(shipments, outcome.searched, at);
       recordOk(c, at, shipments.shipments.filter((s) => s.connections.includes(KEY)).length);
     }
     settleMailOrders(shipments, at, timeZone);
@@ -172,7 +227,7 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
     return count;
   });
   log(outcome.ok
-    ? `refresh: mail ok, ${outcome.orders.length} Order(s), ${added} new DHL number(s)${outcome.ignored ? `, ${outcome.ignored} mail(s) ignored` : ""}`
+    ? `refresh: mail ok, ${outcome.orders.length} Order(s), ${added} new DHL number(s), ${outcome.searched.length} searched for (${named} item(s) named)${outcome.ignored ? `, ${outcome.ignored} mail(s) ignored` : ""}`
     : `refresh: mail failed (${outcome.reason})`);
   return { ...outcome, counted: countNetwork };
 }
