@@ -3,14 +3,21 @@
 // "Source adapters"). No Amazon password is ever stored: the profile keeps
 // Amazon's own session cookie, and Chrome keeps any saved password in the
 // keyring (--password-store=gnome-libsecret), never in our files.
-import { mkdir, rm } from "node:fs/promises";
+//
+// Accounts run one after another. Whoever drives an account's Chrome holds an
+// flock on its profile directory: a refresh skips an account that is locked
+// (neither success nor failure), a Login or a remove waits up to 90 s for it
+// (one account's run takes about 40 s).
+import { mkdir, rm, stat } from "node:fs/promises";
 import { markKnown, recordEvents } from "../events.mjs";
 import { connectionRecord, recordFailure, recordOk } from "../health.mjs";
+import { withLock } from "../lock.mjs";
 import { nextAmazonPort } from "../ports.mjs";
 import { absorbDhlTwin, applyAmazonReading } from "../merge.mjs";
 import { readState, updateState } from "../state.mjs";
 import { openAccountBrowser, profileDirFor } from "./browser.mjs";
 import { orderDetailsUrl } from "./pages.mjs";
+import { applyOwnership, hasManualOrders, ordersToLookFor, releaseOwnership, settleLinkOnly } from "./manual.mjs";
 import { readAccount, waitForSignIn } from "./read.mjs";
 import { localHour } from "./status.mjs";
 
@@ -19,6 +26,14 @@ const LABEL = /^[\p{L}\p{N}][\p{L}\p{N} _-]{0,23}$/u;
 const QUIET_FROM = 23;
 const QUIET_TO = 7;
 const LOGIN_DEADLINE_MS = 15 * 60_000;
+const PROFILE_WAIT_SECONDS = 90;
+
+// Runs fn while holding the profile's flock; waitSeconds 0 doesn't wait.
+// Throws an error with code "locked" when it stays taken.
+async function withProfile(profileDir, waitSeconds, fn) {
+  await mkdir(profileDir, { recursive: true, mode: 0o700 });
+  return withLock(profileDir, fn, { waitSeconds });
+}
 
 const MESSAGES = (label) => ({
   "signed-out": `Amazon · ${label} needs a login`,
@@ -58,13 +73,16 @@ export async function removeAccount(label, { stateDir, env }) {
   const removed = await updateState(stateDir, ({ sources, shipments }) => {
     if (!sources.connections[key]) return false;
     delete sources.connections[key];
-    shipments.shipments = shipments.shipments.filter((s) => {
-      s.connections = s.connections.filter((c) => c !== key);
-      return s.connections.length > 0;
-    });
+    // A manual Order it owned goes back to being looked for (or link-only).
+    shipments.shipments = releaseOwnership(shipments.shipments, key);
     return true;
   });
-  if (removed) await rm(profileDirFor(env, label), { recursive: true, force: true });
+  const profileDir = profileDirFor(env, label);
+  if (removed && await stat(profileDir).then(() => true, () => false)) {
+    const remove = () => rm(profileDir, { recursive: true, force: true });
+    await withLock(profileDir, remove, { waitSeconds: PROFILE_WAIT_SECONDS })
+      .catch((e) => { if (e.code === "locked") return remove(); throw e; });
+  }
   return removed;
 }
 
@@ -76,27 +94,35 @@ export async function refreshAmazon({ stateDir, env, now, chrome, sleep, timeZon
   const snapshot = await readState(stateDir);
   const due = amazonConnections(snapshot.sources)
     .filter(([key, c]) => (only === null || key === only) && (c.health === "ok" || c.health === "source-down"));
-  if (due.length === 0) return;
-  if (inQuietHours(now(), timeZone)) {
+  if (due.length > 0 && inQuietHours(now(), timeZone)) {
     log(`refresh: amazon skipped (quiet hours), ${due.length} account(s)`);
-    return;
-  }
-  for (const [key, conn] of due) {
-    const known = (k) => snapshot.shipments.shipments.find((s) => s.key === k);
-    const result = await runAccount(conn, { env, chrome, sleep, now, timeZone, known, hidden: true });
-    if (result.reason === "busy") {
-      log("refresh: amazon account busy, skipped");
-      continue;
+  } else {
+    for (const [key, conn] of due) {
+      // Earlier accounts in this run may have claimed manual Orders.
+      const { shipments } = await readState(stateDir);
+      const known = (k) => shipments.shipments.find((s) => s.key === k);
+      const lookFor = ordersToLookFor(shipments.shipments, key);
+      const result = await withProfile(profileDirFor(env, conn.label), 0,
+        () => runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, hidden: true }))
+        .catch((e) => { if (e.code === "locked") return { reason: "busy" }; throw e; });
+      if (result.reason === "busy") {
+        log("refresh: amazon account busy, skipped");
+        continue;
+      }
+      await applyAccountRun(stateDir, key, result, { now, counts, log, finishRun });
     }
-    await applyAccountRun(stateDir, key, result, { now, counts, log, finishRun });
+  }
+  // With no account (left) to ask, a manual Order ID is link-only.
+  if (hasManualOrders(snapshot.shipments.shipments)) {
+    await updateState(stateDir, ({ shipments, sources }) => settleLinkOnly(shipments.shipments, sources.connections));
   }
 }
 
-async function runAccount(conn, { env, chrome, sleep, now, timeZone, known, hidden, tab: openTab }) {
+async function runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, hidden, tab: openTab }) {
   let tab = openTab;
   try {
     tab ??= await openAccountBrowser(chrome, { profileDir: profileDirFor(env, conn.label), port: conn.port, hidden });
-    return await readAccount(tab, { known, sleep, now, timeZone, historyLoaded: Boolean(openTab) });
+    return await readAccount(tab, { known, lookFor, sleep, now, timeZone, historyLoaded: Boolean(openTab) });
   } catch (e) {
     if (e.code === "busy") return { reason: "busy" };
     if (e.code !== "browser") throw e;
@@ -120,6 +146,7 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     // ones); a refresh records them once at the end of its run.
     if (firstSync) markKnown(shipments);
     for (const reading of readings) upsert(shipments.shipments, reading, conn, key, at);
+    applyOwnership(shipments.shipments, key, conn.label, result);
     // A Login that reached the order history has proven the session, even if
     // its first sync then fails for another reason.
     if (firstSync && conn.health !== "ok") {
@@ -136,6 +163,7 @@ async function applyAccountRun(stateDir, key, result, { now, counts, log, finish
     } else {
       recordOk(conn, at, shipments.shipments.filter((s) => s.connections.includes(key)).length);
     }
+    settleLinkOnly(shipments.shipments, sources.connections);
     finishRun(sources, at);
     if (firstSync) recordEvents(shipments, { firstSync: new Set([key]) });
   });
@@ -177,14 +205,21 @@ function upsert(list, reading, conn, key, now) {
 // `login amazon:<label>`: opens the account's profile visibly on amazon.de;
 // once the order history loads, the window moves to the hidden workspace and
 // the first sync runs in the same Chrome. Returns "ok", "cancelled",
-// "timed-out", "browser" or "unknown-account".
-export async function loginAmazon(label, { stateDir, env, now, chrome, sleep, timeZone, log }) {
+// "timed-out", "browser", "busy" (a refresh held the profile for over 90 s)
+// or "unknown-account".
+export async function loginAmazon(label, deps) {
+  const { sources } = await readState(deps.stateDir);
+  if (!sources.connections[connectionKey(label)]) return "unknown-account";
+  return withProfile(profileDirFor(deps.env, label), PROFILE_WAIT_SECONDS, () => signIn(label, deps))
+    .catch((e) => { if (e.code === "locked") return "busy"; throw e; });
+}
+
+async function signIn(label, { stateDir, env, now, chrome, sleep, timeZone, log }) {
   const key = connectionKey(label);
   const { sources, shipments } = await readState(stateDir);
   const conn = sources.connections[key];
   if (!conn) return "unknown-account";
   const profileDir = profileDirFor(env, label);
-  await mkdir(profileDir, { recursive: true, mode: 0o700 });
 
   let tab;
   try {
@@ -201,7 +236,8 @@ export async function loginAmazon(label, { stateDir, env, now, chrome, sleep, ti
     await tab.hide();
     const known = (k) => shipments.shipments.find((s) => s.key === k);
     handedOver = true;
-    const result = await runAccount(conn, { env, chrome, sleep, now, timeZone, known, tab });
+    const lookFor = ordersToLookFor(shipments.shipments, key);
+    const result = await runAccount(conn, { env, chrome, sleep, now, timeZone, known, lookFor, tab });
     const counts = { synced: 0, failed: 0, network: 0, lookedUp: 0 };
     const finishRun = (sources) => {
       sources.offline = counts.network > 0 && counts.network === counts.failed && counts.synced === 0 && counts.lookedUp === 0;

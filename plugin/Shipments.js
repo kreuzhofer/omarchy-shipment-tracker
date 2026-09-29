@@ -92,6 +92,29 @@ function normalizeTrackingNumber(text) {
   return String(text || "").replace(/\s+/g, "").toUpperCase()
 }
 
+// The add field's format decides the Source, as in the CLI's parseManualId:
+// an Amazon Order ID (NNN-NNNNNNN-NNNNNNN), else a DHL tracking number.
+function isAmazonOrderId(id) {
+  return /^\d{3}-\d{7}-\d{7}$/.test(String(id || ""))
+}
+
+// The key `add` will write for a normalized ID.
+function manualKey(id) {
+  return (isAmazonOrderId(id) ? "amazon:" : "dhl:") + id
+}
+
+// The immediate "Looking up…" row for an ID `add` hasn't written yet.
+function queuedRow(id, at) {
+  var amazon = isAmazonOrderId(id)
+  return { key: "queued:" + id, direction: "Incoming", source: amazon ? "Amazon" : "DHL", account: null,
+    carrier: amazon ? null : "DHL", title: id, status: "Unknown", estimate: { text: "Looking up…" }, delayed: false,
+    url: amazon ? amazonOrderUrl(id) : dhlTrackingUrl(id), changedAt: at, discoveredAt: at }
+}
+
+function amazonOrderUrl(orderId) {
+  return "https://www.amazon.de/your-orders/order-details?orderID=" + encodeURIComponent(orderId)
+}
+
 function dhlTrackingUrl(trackingNumber) {
   return "https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=" + encodeURIComponent(trackingNumber)
 }

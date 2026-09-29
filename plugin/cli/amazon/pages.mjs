@@ -7,6 +7,10 @@
 export const ORIGIN = "https://www.amazon.de";
 export const HISTORY_URL = `${ORIGIN}/gp/css/order-history?ref_=nav_orders_first`;
 
+// The history page's own "Alle Bestellungen durchsuchen" form (GET, opt=ab):
+// its results come back in the order history's markup.
+export const orderSearchUrl = (orderId) => `${ORIGIN}/your-orders/search/ref=ppx_yo2ov_dt_b_search?opt=ab&search=${encodeURIComponent(orderId)}`;
+
 export const orderDetailsUrl = (orderId) => `${ORIGIN}/your-orders/order-details?orderID=${encodeURIComponent(orderId)}`;
 
 // Digital orders (audiobooks, Prime Video, subscriptions) have no tracker.
@@ -42,11 +46,14 @@ export function classifyPage(url, html) {
   return null;
 }
 
-// The order history: one entry per Shipment with a tracker link, newest Order
-// first. Returns { ok: true, shipments: [{ orderId, packageIndex, href, title }] }
-// or { ok: false } when the page isn't the order history (a changed data format).
+// The order history (or an order search result): one entry per Shipment with
+// a tracker link, newest Order first, and the IDs of all Orders listed, with
+// or without a tracker link. Returns { ok: true, shipments: [{ orderId,
+// packageIndex, href, title }], orderIds: Set } or { ok: false } when the page
+// isn't the order history (a changed data format).
 export function parseHistory(html) {
   if (!/your-orders-content-container/.test(html)) return { ok: false };
+  const orderIds = new Set([...html.matchAll(/\/your-orders\/order-details\?orderID=([\w-]+)/g)].map((m) => m[1]));
   const shipments = [];
   const seen = new Set();
   for (const box of html.split(/class="a-box delivery-box/).slice(1)) {
@@ -62,7 +69,7 @@ export function parseHistory(html) {
     const title = box.match(/class="yohtmlc-product-title"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/);
     shipments.push({ orderId, packageIndex, href: href.toString(), title: title ? cleanText(title[1]) : null });
   }
-  return { ok: true, shipments };
+  return { ok: true, shipments, orderIds };
 }
 
 // A progress-tracker page. Returns { ok: true, state, carrierText } with the

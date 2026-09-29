@@ -1,7 +1,8 @@
 // The one test seam (spec #21, "Testing Decisions"): run the real
 // `shipment-tracker` entry point against a temp state dir, a fixed clock and
 // fake transports, then look only at shipments.json, sources.json and events[].
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -49,9 +50,13 @@ const CDP_ALLOWED = new Set([
 // network error, or a function ({ polls }) => page that is re-evaluated on
 // every read (polls = reads since the navigation), e.g. for a user signing in.
 // `{ closed: true }` means the user closed the window.
+//   search: { "<orderId>": page } for the order search (/your-orders/search?search=…)
+// Several accounts: `{ accounts: { <label>: routes } }`, picked by the
+// profile directory Chrome is launched with.
 // Options: launchFails (Chrome doesn't come up), busy (port already in use).
-// Records launches, CDP methods, navigations and reads with the world clock.
-export function fakeChrome(routes = {}, { launchFails = false, busy = false } = {}) {
+// Records launches, CDP methods, navigations (with the account's label) and
+// reads with the world clock, and `overlapped` when two Chromes were up at once.
+export function fakeChrome(allRoutes = {}, { launchFails = false, busy = false } = {}) {
   const fake = {
     clock: () => new Date(0),
     launches: [],
@@ -60,10 +65,15 @@ export function fakeChrome(routes = {}, { launchFails = false, busy = false } = 
     reads: [],
     hidden: false,
     open: false,
+    overlapped: false,
     async launch({ args, port, hidden }) {
       fake.launches.push({ args, port, hidden });
       if (busy) throw Object.assign(new Error("port in use"), { code: "busy" });
       if (launchFails) throw Object.assign(new Error("no DevTools"), { code: "browser" });
+      const label = args.find((a) => a.startsWith("--user-data-dir=")).split("/").at(-1);
+      const routes = allRoutes.accounts ? allRoutes.accounts[label] : allRoutes;
+      if (!routes) throw Object.assign(new Error(`no routes for account ${label}`), { code: "unexpected" });
+      if (fake.open) fake.overlapped = true;
       fake.open = true;
       fake.hidden = hidden;
       const listeners = new Set();
@@ -86,6 +96,7 @@ export function fakeChrome(routes = {}, { launchFails = false, busy = false } = 
         let page;
         if (u.pathname.startsWith("/gp/css/order-history")) page = routes.history;
         else if (u.pathname === "/progress-tracker/package") page = routes.trackers?.[`${u.searchParams.get("orderId")}#${u.searchParams.get("packageIndex")}`];
+        else if (u.pathname.startsWith("/your-orders/search")) page = routes.search?.[u.searchParams.get("search")];
         if (page === undefined) throw Object.assign(new Error(`unexpected navigation to ${u.pathname}`), { code: "unexpected" });
         return (ctx) => {
           const p = typeof page === "function" ? page(ctx) : page;
@@ -104,7 +115,7 @@ export function fakeChrome(routes = {}, { launchFails = false, busy = false } = 
             case "Target.attachToTarget": return { sessionId: "S1" };
             case "Page.enable": return {};
             case "Page.navigate": {
-              fake.navigations.push({ url: params.url, at: fake.clock().getTime() });
+              fake.navigations.push({ url: params.url, at: fake.clock().getTime(), account: label });
               route = resolve(params.url);
               polls = 0;
               const page = route({ polls });
@@ -268,4 +279,14 @@ export function fakeBrowser({ outcome = "success", code = "fake-code" } = {}) {
     },
   };
   return browser;
+}
+
+// Holds an exclusive flock on `path` (a file or directory) from another
+// process, like a second CLI run would. Returns release().
+export async function holdLock(path) {
+  await mkdir(path, { recursive: true });
+  const holder = spawn("flock", ["--exclusive", path, "-c", "echo locked; exec cat >/dev/null"], { stdio: ["pipe", "pipe", "ignore"] });
+  const exited = new Promise((resolve) => holder.once("close", resolve));
+  await new Promise((resolve) => holder.stdout.once("data", resolve));
+  return async () => { holder.stdin.end(); await exited; };
 }
