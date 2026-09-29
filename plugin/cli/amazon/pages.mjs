@@ -4,7 +4,7 @@
 // lists one "Lieferung verfolgen" link per Shipment, and each tracker page
 // carries a language-independent `page-state` JSON. CSS milestone selectors
 // were absent on the live page and are not used.
-import { normalizeImageUrl } from "../images.mjs";
+import { imageHost, normalizeImageUrl } from "../images.mjs";
 
 export const ORIGIN = "https://www.amazon.de";
 export const HISTORY_URL = `${ORIGIN}/gp/css/order-history?ref_=nav_orders_first`;
@@ -51,7 +51,7 @@ export function classifyPage(url, html) {
 // The order history (or an order search result): one entry per Shipment with
 // a tracker link, newest Order first, and the IDs of all Orders listed, with
 // or without a tracker link. Returns { ok: true, shipments: [{ orderId,
-// packageIndex, href, title, imageUrl }], orderIds: Set } or { ok: false } when
+// packageIndex, href, title, imageUrl }], orderIds: Set, stats } or { ok: false } when
 // the page isn't the order history (a changed data format).
 //
 // Two layouts, told apart by their containers (#64). The personal history
@@ -63,15 +63,30 @@ export function classifyPage(url, html) {
 // same in both. The site header links to /ap/signin on both; classifyPage
 // doesn't take that for a sign-in page.
 //
-// A box's items come before its tracker link; the last box's chunk runs on to
-// the end of the page (recommendations, footer), so the image is the first
-// item image before the link, or none (see images.mjs).
+// A box is its element, from its opening tag to the matching closing one
+// (Chrome serialises well-formed HTML). The item image is looked for in the
+// whole box, before or after the tracker link, and never outside it: the page
+// goes on after the last box with recommendations and their own product
+// images. Should the box's element not hold its tracker link (a markup
+// change), the chunk up to the next box is used, with the image looked for
+// before the link as before.
+//
+// An item image is an `<img>` inside `.product-image` or with class
+// `itemImageSource` (any `<img>` in the box when there is none of those).
+// Its URL is the first of `src`, `data-src`, `data-a-hires` and the first
+// `srcset` entry that is a product image on Amazon's CDN: a lazy-loaded image
+// has a placeholder in `src` (see images.mjs).
+//
+// `stats` is for the refresh's diagnostic line and holds no IDs or URLs:
+// boxes found, boxes with an image URL, and how many image URLs in the boxes
+// point at each host.
 const HISTORY_PAGE = [/your-orders-content-container/, /id="yourOrderHistorySection"/];
-const DELIVERY_BOX = /class="a-box delivery-box|id="orderCardDeliveryBox"/;
-const ITEM_IMAGES = [
-  /class="product-image(?:\s[^"]*)?"[^>]*>(?:(?!<\/div>)[\s\S])*?<img\b[^>]*?\ssrc="([^"]*)"/,
-  /<img\b(?=[^>]*\sclass="(?:[^"]*\s)?itemImageSource[\s"])[^>]*?\ssrc="([^"]*)"/,
-];
+const DELIVERY_BOX = /class="a-box delivery-box|id="orderCardDeliveryBox"/g;
+const TRACKER_LINK = /href="([^"]*\/progress-tracker\/package[^"]*)"/;
+const IMG_TAG = /<img\b[^>]*>/g;
+const ITEM_IMAGE_CLASS = /\sclass="(?:[^"]*\s)?itemImageSource[\s"]/;
+const PRODUCT_IMAGE = /class="product-image(?:\s[^"]*)?"/g;
+const IMAGE_ATTRS = ["src", "data-src", "data-a-hires", "srcset"];
 const PRODUCT_TITLE = /class="yohtmlc-product-title"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/;
 const ITEM_LINK = /<a\b[^>]*\shref="(?:https:\/\/www\.amazon\.de)?\/(?:dp|gp\/product)\/[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
 
@@ -80,29 +95,98 @@ export function parseHistory(html) {
   const orderIds = new Set([...html.matchAll(/\/your-orders\/order-details\?orderID=([\w-]+)/g)].map((m) => m[1]));
   const shipments = [];
   const seen = new Set();
-  for (const box of html.split(DELIVERY_BOX).slice(1)) {
-    const link = box.match(/href="([^"]*\/progress-tracker\/package[^"]*)"/);
-    if (!link) continue;
+  const stats = { boxes: 0, withImage: 0, hosts: {} };
+  const starts = [...html.matchAll(DELIVERY_BOX)].map((m) => html.lastIndexOf("<", m.index));
+  starts.forEach((start, i) => {
+    stats.boxes++;
+    const chunk = html.slice(start, starts[i + 1] ?? html.length);
+    const end = elementEnd(html, start);
+    const element = end === null ? null : html.slice(start, end);
+    const inElement = element !== null && TRACKER_LINK.test(element);
+    const box = inElement ? element : chunk;
+    const link = box.match(TRACKER_LINK);
+    // The images to look at: the whole box, or what comes before its link.
+    const scope = inElement ? box : link ? box.slice(0, link.index) : element ?? "";
+    const image = itemImage(scope, stats.hosts);
+    if (image) stats.withImage++;
+    if (!link) return;
     const href = new URL(decodeEntities(link[1]), ORIGIN);
     const orderId = href.searchParams.get("orderId");
     const packageIndex = href.searchParams.get("packageIndex") ?? "0";
-    if (!orderId || isDigitalOrder(orderId)) continue;
+    if (!orderId || isDigitalOrder(orderId)) return;
     const key = `${orderId}#${packageIndex}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
-    const items = box.slice(0, link.index);
-    const image = firstMatch(items, ITEM_IMAGES);
     shipments.push({
-      orderId, packageIndex, href: href.toString(), title: productTitle(box, items),
-      imageUrl: image ? normalizeImageUrl(decodeEntities(image[1])) : null,
+      orderId, packageIndex, href: href.toString(),
+      title: productTitle(box, inElement ? box : box.slice(0, link.index)),
+      imageUrl: image,
     });
-  }
-  return { ok: true, shipments, orderIds };
+  });
+  return { ok: true, shipments, orderIds, stats };
 }
 
-// The earliest match of any of `patterns` in `text`.
-function firstMatch(text, patterns) {
-  return patterns.map((re) => text.match(re)).filter(Boolean).sort((a, b) => a.index - b.index)[0] ?? null;
+// Where the element whose opening tag starts at `start` ends (after its
+// closing tag), or null when it never closes. Comments and scripts are skipped.
+function elementEnd(html, start) {
+  const name = html.slice(start).match(/^<([a-z][a-z0-9-]*)/i)?.[1];
+  if (!name) return null;
+  const re = new RegExp(`<!--[\\s\\S]*?-->|<script\\b[\\s\\S]*?<\\/script>|<(\\/?)${name}\\b[^>]*>`, "gi");
+  re.lastIndex = start;
+  let depth = 0;
+  for (let m = re.exec(html); m; m = re.exec(html)) {
+    if (m[0].startsWith("<!--") || /^<script\b/i.test(m[0])) continue;
+    if (m[1]) depth--;
+    else if (!m[0].endsWith("/>")) depth++;
+    if (depth === 0) return re.lastIndex;
+  }
+  return null;
+}
+
+// The first item image's product image URL in `scope`, or null. Counts the
+// host of every image URL it looks at into `hosts`.
+function itemImage(scope, hosts) {
+  const tags = [...scope.matchAll(IMG_TAG)];
+  const items = tags.filter((t) => ITEM_IMAGE_CLASS.test(t[0]) || insideProductImage(scope, t.index));
+  let found = null;
+  for (const [tag] of items.length > 0 ? items : tags) {
+    for (const url of imageUrls(tag)) {
+      hosts[imageHost(url)] = (hosts[imageHost(url)] ?? 0) + 1;
+      found ??= normalizeImageUrl(url);
+    }
+  }
+  return found;
+}
+
+// An `<img>` at `index` sits in a `.product-image` element that is still open.
+function insideProductImage(scope, index) {
+  const before = scope.slice(0, index);
+  const opened = [...before.matchAll(PRODUCT_IMAGE)].at(-1);
+  return Boolean(opened) && !before.slice(opened.index).includes("</div>");
+}
+
+// The candidate URLs of one `<img>` tag, in order of preference.
+function imageUrls(tag) {
+  const urls = [];
+  for (const name of IMAGE_ATTRS) {
+    const value = tag.match(new RegExp(`\\s${name}="([^"]*)"`))?.[1];
+    if (value === undefined) continue;
+    const decoded = decodeEntities(value).trim();
+    // A srcset's first entry is its URL up to the first space (a URL's
+    // size token may itself hold a comma).
+    const url = name === "srcset" ? decoded.split(/\s+/)[0].replace(/,$/, "") : decoded;
+    if (url) urls.push(url);
+  }
+  return urls;
+}
+
+// Whether a Business-layout history (or order search) page has rendered its
+// order cards: the page ships `orderCard…Skeleton` placeholders first and
+// fills them in client-side. `business` is false for any other page.
+const SKELETON = /class="[^"]*\borderCard\w*Skeleton\b/;
+export function renderState(html) {
+  if (!/id="yourOrderHistorySection"/.test(html)) return { business: false };
+  return { business: true, pending: SKELETON.test(html), boxes: (html.match(/id="orderCardDeliveryBox"/g) ?? []).length };
 }
 
 // `.yohtmlc-product-title` where there is one, else the first item link

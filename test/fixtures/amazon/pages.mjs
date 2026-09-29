@@ -76,19 +76,26 @@ ${orders.map(orderCard).join("\n")}
 // button stack after the items, next to the packing slip. There is neither
 // `your-orders-content-container` nor `a-box delivery-box`. `orders` as for
 // historyPage; `pending`: cards not rendered yet (skeletons, no links).
+// The live page's image markup is not known for sure (#68), so a Shipment or
+// item may give `imageAttrs` ({ src, "data-src", srcset, … }) for its `<img>`
+// instead of `image`, and a Shipment `itemsAfterLink: true` puts its items
+// after the button stack with the tracker link.
 function businessOrderCard({ orderId, shipments }) {
-  const boxes = shipments.map((s) => `
+  const boxes = shipments.map((s) => {
+    const items = `
+    <div id="deliveryItemList" class="a-column a-span8"><div class="a-row"></div>${[{ title: s.title, image: s.image, imageAttrs: s.imageAttrs }, ...(s.items ?? [])].map(businessItem).join("")}</div>`;
+    return `
 <div id="orderCardDeliveryBox" class="a-box"><div class="a-box-inner">
   <div class="a-row"><div class="a-column a-span9"><div class="a-row a-size-medium"><span class="a-color-base a-text-bold">${esc(s.primary ?? "Unterwegs")}</span></div></div></div>
-  <div class="a-row a-spacing-top-medium">
-    <div id="deliveryItemList" class="a-column a-span8"><div class="a-row"></div>${[{ title: s.title, image: s.image }, ...(s.items ?? [])].map(businessItem).join("")}</div>
+  <div class="a-row a-spacing-top-medium">${s.itemsAfterLink ? "" : items}
     <div class="a-column a-span4 a-span-last"><div class="a-button-stack">
       <span class="a-button a-spacing-mini a-button-primary"><span class="a-button-inner"><a href="/ps/product-support/order?orderId=${orderId}&amp;ref=ab_ppx_yo_dt_b_ps" class="a-button-text">Produktsupport</a></span></span>
       <span class="a-button a-spacing-mini a-button-base"><span class="a-button-inner"><a href="/vps/pslip?fnid=Amazon&amp;orderId=${orderId}&amp;_encoding=UTF8&amp;shipmentId=${s.shipmentId}&amp;ref=ab_ppx_yo_dt_b_vps" class="a-button-text">Lieferschein</a></span></span>
       <span class="a-button a-spacing-mini a-button-base"><span class="a-button-inner"><a href="/progress-tracker/package?orderId=${orderId}&amp;_encoding=UTF8&amp;shipmentId=${s.shipmentId}&amp;packageIndex=${s.packageIndex}&amp;vt=NOTIFICATIONS&amp;ref=ab_ppx_yo_dt_b_track_package" class="a-button-text">Lieferung verfolgen</a></span></span>
-    </div></div>
+    </div></div>${s.itemsAfterLink ? items : ""}
   </div>
-</div></div>`).join("");
+</div></div>`;
+  }).join("");
   return `
 <div id="orderCard" class="a-box-group a-spacing-top-base">
   <input type="hidden" name="aggregatedFields" value="{&quot;orderId&quot;:&quot;${orderId}&quot;,&quot;shipToFullName&quot;:&quot;Erika Musterfrau&quot;,&quot;placedByGroup&quot;:&quot;Beispiel GmbH&quot;}">
@@ -103,8 +110,9 @@ function businessOrderCard({ orderId, shipments }) {
 </div>`;
 }
 
-function businessItem({ title, image = DEFAULT_IMAGE }) {
-  const img = image === null ? "" : `<img alt="" src="${esc(image)}" class="itemImageSource">`;
+function businessItem({ title, image = DEFAULT_IMAGE, imageAttrs }) {
+  const attrs = imageAttrs ? Object.entries(imageAttrs).map(([k, v]) => ` ${k}="${esc(v)}"`).join("") : ` src="${esc(image)}"`;
+  const img = image === null && !imageAttrs ? "" : `<img alt=""${attrs} class="itemImageSource">`;
   return `
       <div id="itemDetail" class="a-row itemDetails">
         <div class="a-column a-span2 imageContainer"><a class="a-link-normal itemImage" href="/dp/B000000000?ref=fed_asin_title">${img}</a></div>

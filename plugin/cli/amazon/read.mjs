@@ -3,7 +3,7 @@
 // pages for non-Terminal Shipments), reached through the history's own links
 // and search form, with 4–12 s random gaps. Any sign-in or challenge page
 // stops the run at once; nothing is ever submitted or clicked.
-import { classifyPage, HISTORY_URL, inferCarrier, orderSearchUrl, parseHistory, parseTracker } from "./pages.mjs";
+import { classifyPage, HISTORY_URL, inferCarrier, orderSearchUrl, parseHistory, parseTracker, renderState } from "./pages.mjs";
 import { amazonStatus, parseEstimate } from "./status.mjs";
 import { isDropped } from "../retention.mjs";
 import { TERMINAL } from "../shipments.mjs";
@@ -14,8 +14,12 @@ const between = (min, max) => min + Math.random() * (max - min);
 // Waits a moment after the load event before reading, like a person would.
 const settle = (sleep) => sleep(Math.round(between(1000, 3000)));
 const gap = (sleep) => sleep(Math.round(between(4000, 12000)));
+// A Business history renders its order cards after the load event.
+const RENDER_POLL_MS = 1000;
+const RENDER_WAIT_MS = 10_000;
 
-// Returns { reason, readings, pages, unmapped, owned, notOwned, images }. `reason` is
+// Returns { reason, readings, pages, unmapped, owned, notOwned, images,
+// listed, boxes }. `reason` is
 // null for a full run, else the Health reason ("signed-out", "challenge",
 // "shape", "network") that stopped it; readings taken before the stop are
 // still returned. `known(key)` returns the Shipment already in shipments.json,
@@ -32,8 +36,17 @@ const gap = (sleep) => sleep(Math.round(between(4000, 12000)));
 //
 // `images`: [{ key, imageUrl }] for every Shipment the history (or an order
 // search) listed with a product image, Terminal ones included (see images.mjs).
+//
+// `listed`: how many Shipments the history listed (null when it wasn't
+// read); `business`: the history was in the Business layout. `boxes`: the history's and order searches' delivery boxes for the
+// diagnostic line ({ boxes, withImage, hosts }, no IDs or URLs).
 export async function readAccount(tab, { known, sleep, now, timeZone, historyLoaded = false, lookFor = [], dropped = new Set() }) {
-  const result = { reason: null, readings: [], pages: 0, unmapped: 0, owned: [], notOwned: [], images: [] };
+  const result = { reason: null, readings: [], pages: 0, unmapped: 0, owned: [], notOwned: [], images: [], listed: null, boxes: { boxes: 0, withImage: 0, hosts: {} } };
+  const noteBoxes = ({ stats }) => {
+    result.boxes.boxes += stats.boxes;
+    result.boxes.withImage += stats.withImage;
+    for (const [host, n] of Object.entries(stats.hosts)) result.boxes.hosts[host] = (result.boxes.hosts[host] ?? 0) + n;
+  };
   const noteImages = (listed) => {
     for (const s of listed) if (s.imageUrl) result.images.push({ key: shipmentKey(s), imageUrl: s.imageUrl });
   };
@@ -42,10 +55,13 @@ export async function readAccount(tab, { known, sleep, now, timeZone, historyLoa
     if (!(await tab.navigate(HISTORY_URL))) return { ...result, reason: "network" };
     await settle(sleep);
   }
-  const page = await readPage(tab);
+  const page = await readRenderedPage(tab, sleep);
   if (page.reason) return { ...result, reason: page.reason };
   const history = parseHistory(page.html);
   if (!history.ok) return { ...result, reason: "shape" };
+  noteBoxes(history);
+  result.listed = history.shipments.length;
+  result.business = renderState(page.html).business;
 
   const listed = [...history.shipments];
   noteImages(listed);
@@ -61,10 +77,11 @@ export async function readAccount(tab, { known, sleep, now, timeZone, historyLoa
     result.pages++;
     if (!(await tab.navigate(orderSearchUrl(orderId)))) return { ...result, reason: "network" };
     await settle(sleep);
-    const page = await readPage(tab);
+    const page = await readRenderedPage(tab, sleep);
     if (page.reason) return { ...result, reason: page.reason };
     const found = parseHistory(page.html);
     if (!found.ok) return { ...result, reason: "shape" };
+    noteBoxes(found);
     if (!found.orderIds.has(orderId)) {
       result.notOwned.push(orderId);
       continue;
@@ -111,6 +128,30 @@ async function readPage(tab) {
   const url = await tab.url();
   const html = await tab.html();
   return { reason: classifyPage(url, html), html };
+}
+
+// readPage for a history or order search page. A Business-layout page ships
+// `orderCard…Skeleton` placeholders and renders its cards client-side, so it
+// is read again every second until no placeholder is left and two reads in a
+// row show the same number of boxes (at least one), for up to 10 s; then
+// whatever is there is read. The same page is only read again (no navigation), so this counts
+// against no page cap.
+async function readRenderedPage(tab, sleep) {
+  let page = await readPage(tab);
+  if (page.reason) return page;
+  let state = renderState(page.html);
+  for (let waited = 0; state.business && waited < RENDER_WAIT_MS; waited += RENDER_POLL_MS) {
+    await sleep(RENDER_POLL_MS);
+    const next = await readPage(tab);
+    if (next.reason) return next;
+    const nextState = renderState(next.html);
+    // No box at all may still be a page that hasn't rendered: wait on.
+    const rendered = nextState.business && !nextState.pending && nextState.boxes > 0 && nextState.boxes === state.boxes;
+    page = next;
+    state = nextState;
+    if (rendered) break;
+  }
+  return page;
 }
 
 export const shipmentKey = ({ orderId, packageIndex }) => `amazon:${orderId}#${packageIndex}`;

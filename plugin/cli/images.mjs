@@ -15,9 +15,22 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { readState, updateState } from "./state.mjs";
 
-// Amazon's image CDN; the size token between the image ID and `.jpg` is
-// rewritten to one 142 px square for every card.
-const AMAZON_IMAGE = /^https:\/\/(m\.media-amazon\.com|images-eu\.ssl-images-amazon\.com)\/images\/I\/([A-Za-z0-9+%-]+)\.[^/]*\.jpg$/;
+// Amazon's image CDN hosts (all Amazon's own; any other host is never
+// fetched). Pages link the same image IDs on any of them, over https or
+// protocol-relative (never plain http), with or without a size token, as
+// .jpg, .png, .gif or .webp. The size token between the image ID and the
+// extension is rewritten to one 142 px square JPEG for every card.
+const IMAGE_HOSTS = [
+  "m.media-amazon.com",
+  "images-eu.ssl-images-amazon.com",
+  "images-na.ssl-images-amazon.com",
+  "images-fe.ssl-images-amazon.com",
+  "ecx.images-amazon.com",
+  "g-ecx.images-amazon.com",
+  "z-ecx.images-amazon.com",
+];
+const AMAZON_IMAGE = new RegExp(`^(?:https:)?//(${IMAGE_HOSTS.map((h) => h.replace(/[.-]/g, "\\$&")).join("|")})`
+  + "/images/I/([A-Za-z0-9+%-]+)(?:\\.[^/?#]*)?\\.(?:jpe?g|png|gif|webp)(?:[?#][^\\s]*)?$", "i");
 const SIZE = "_SS142_";
 const MAX_BYTES = 200_000;
 const TIMEOUT_MS = 10_000;
@@ -28,11 +41,22 @@ const DIR = "images";
 const imageId = (url) => url.match(AMAZON_IMAGE)?.[2] ?? null;
 const pathFor = (stateDir, id) => join(stateDir, DIR, `${id}.jpg`);
 
-// An `<img src>` from the order history → the imageUrl to keep, or null when
-// it isn't a product image on Amazon's CDN (another host, a placeholder).
+// An image URL from the order history (`src`, `data-src`, `srcset`, …) → the
+// imageUrl to keep, or null when it isn't a product image on Amazon's CDN
+// (another host, a placeholder, a data: URI).
 export function normalizeImageUrl(src) {
-  const m = String(src ?? "").match(AMAZON_IMAGE);
-  return m ? `https://${m[1]}/images/I/${m[2]}.${SIZE}.jpg` : null;
+  const m = String(src ?? "").trim().match(AMAZON_IMAGE);
+  return m ? `https://${m[1].toLowerCase()}/images/I/${m[2]}.${SIZE}.jpg` : null;
+}
+
+// The host an image URL points at, for the refresh's diagnostic line: a
+// hostname, "data:", "relative" or "none". Never the path.
+export function imageHost(src) {
+  const s = String(src ?? "").trim();
+  if (!s) return "none";
+  if (/^data:/i.test(s)) return "data:";
+  const m = s.match(/^(?:[a-z][a-z0-9+.-]*:)?\/\/([a-z0-9.-]+)/i);
+  return m ? m[1].toLowerCase() : "relative";
 }
 
 // Under the state lock: `images` ([{ key, imageUrl }], from one account's

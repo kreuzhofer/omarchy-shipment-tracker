@@ -130,3 +130,152 @@ test("an empty Business order search means the account doesn't own the Order", a
   assert.equal(await world.shipment(`amazon:${MANUAL}#0`), undefined);
   assert.ok(await world.shipment(`amazon:${MANUAL}`));
 });
+
+// ---- #68: images in whatever markup the live page uses, and cards that
+// render after the load event.
+
+const PLACEHOLDER = "https://m.media-amazon.com/images/G/01/x-locale/common/grey-pixel.gif";
+const GIF = "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+const ORDERS = ["311-0000000-0000011", "312-0000000-0000012", "313-0000000-0000013", "314-0000000-0000014", "315-0000000-0000015", "316-0000000-0000016"];
+
+test("a Business box's image is found on any Amazon image host, lazy-loaded, in srcset, or after the tracker link", async (t) => {
+  const variants = [
+    // Another Amazon CDN host, a size token with a comma.
+    { src: "https://images-na.ssl-images-amazon.com/images/I/71NaHostAaA._AC_UL75_SR75,75_.jpg" },
+    // Lazy loading: a placeholder in src, the image in data-src.
+    { src: PLACEHOLDER, "data-src": "https://images-eu.ssl-images-amazon.com/images/I/72LazyBbBbB._SX100_.jpg" },
+    // Only the high-resolution attribute.
+    { src: GIF, "data-a-hires": "https://m.media-amazon.com/images/I/73HiresCcCc._SS400_.jpg" },
+    // A srcset (its first entry), protocol-relative, without a size token.
+    { src: GIF, srcset: "//m.media-amazon.com/images/I/74SrcsetDdD.jpg 1x, https://m.media-amazon.com/images/I/74SrcsetDdD._SS284_.jpg 2x" },
+  ];
+  const history = businessHistoryPage([
+    ...variants.map((imageAttrs, i) => ({ orderId: ORDERS[i], shipments: [{ packageIndex: 0, shipmentId: `Tvar0000${i}`, title: `Artikel ${i}`, imageAttrs }] })),
+    // The items after the tracker link in the box.
+    { orderId: ORDERS[4], shipments: [{ packageIndex: 0, shipmentId: "Tvar00004", title: "Artikel 4", image: img("75AfterEeEe"), itemsAfterLink: true }] },
+    // The last box: nothing but a placeholder; the recommendations after it are no item of its.
+    { orderId: ORDERS[5], shipments: [{ packageIndex: 0, shipmentId: "Tvar00005", title: "Artikel 5", imageAttrs: { src: PLACEHOLDER } }] },
+  ], { footer: RECOMMENDATIONS });
+  const trackers = Object.assign({}, ...ORDERS.map((o) => tracker(o, 0)));
+  const { world, cdn } = await businessWorld(t, { history, trackers, search: {} });
+  assert.equal(await world.run("login", "amazon:Firma"), 0);
+
+  const imageUrl = async (i) => (await world.shipment(`amazon:${ORDERS[i]}#0`)).imageUrl ?? null;
+  assert.deepEqual(await Promise.all(ORDERS.map((o, i) => imageUrl(i))), [
+    "https://images-na.ssl-images-amazon.com/images/I/71NaHostAaA._SS142_.jpg",
+    "https://images-eu.ssl-images-amazon.com/images/I/72LazyBbBbB._SS142_.jpg",
+    img("73HiresCcCc"),
+    img("74SrcsetDdD"),
+    img("75AfterEeEe"),
+    null,
+  ]);
+  // Fetched from the host the page named, at the one size.
+  assert.deepEqual(cdn.requests.map((r) => new URL(r.url).host).sort(), [
+    "images-eu.ssl-images-amazon.com", "images-na.ssl-images-amazon.com", "m.media-amazon.com", "m.media-amazon.com", "m.media-amazon.com",
+  ]);
+});
+
+test("each account's run logs its boxes, those with an image URL and the image hosts, never an ID or URL", async (t) => {
+  const history = businessHistoryPage([
+    { orderId: ORDERS[0], shipments: [{ packageIndex: 0, shipmentId: "Tlog00000", title: "Artikel 0", imageAttrs: { src: GIF, "data-src": img("81LogAaAaAa") } }] },
+    { orderId: ORDERS[1], shipments: [{ packageIndex: 0, shipmentId: "Tlog00001", title: "Artikel 1", image: "https://images-na.ssl-images-amazon.com/images/I/82LogBbBbBb._SS142_.jpg" }] },
+    { orderId: ORDERS[2], shipments: [{ packageIndex: 0, shipmentId: "Tlog00002", title: "Artikel 2", image: null }] },
+  ]);
+  const trackers = Object.assign({}, ...ORDERS.slice(0, 3).map((o) => tracker(o, 0)));
+  const { world } = await businessWorld(t, { history, trackers, search: {} });
+  assert.equal(await world.run("login", "amazon:Firma"), 0);
+  world.logs.length = 0;
+  world.setClock("2026-09-29T11:00:00.000Z");
+
+  assert.equal(await world.run("refresh"), 0);
+
+  assert.deepEqual(world.logs.filter((l) => l.startsWith("refresh: amazon history")), [
+    "refresh: amazon history 3 box(es), 3 listed, 2 with an image URL; image hosts: data: 1, images-na.ssl-images-amazon.com 1, m.media-amazon.com 1",
+  ]);
+  for (const line of world.logs) {
+    assert.doesNotMatch(line, /\d{3}-\d{7}-\d{7}|\/images\/I\/|https?:/);
+  }
+});
+
+// Only skeletons: the cards haven't rendered yet.
+const UNRENDERED = businessHistoryPage([], { pending: 3 });
+
+test("a Login's first sync waits for the Business cards to render instead of reading skeletons", async (t) => {
+  // Signed in at the first read; the cards render a few reads later
+  // (`polls`: reads since the navigation).
+  const { world } = await businessWorld(t, {
+    history: ({ polls }) => (polls < 6 ? UNRENDERED : HISTORY),
+    trackers: TRACKERS,
+  });
+
+  assert.equal(await world.run("login", "amazon:Firma"), 0);
+
+  const keys = (await world.shipmentsFile()).shipments.map((s) => s.key).sort();
+  assert.deepEqual(keys, [`amazon:${SPLIT}#0`, `amazon:${SPLIT}#1`, `amazon:${SINGLE}#0`]);
+  // The same page read again, no navigation beyond the history and the three trackers.
+  assert.equal(world.chrome.navigations.length, 4);
+});
+
+test("a refresh waits for the Business cards to render, up to about 10 s, without counting it as a page", async (t) => {
+  let history = HISTORY;
+  const { world } = await businessWorld(t, { history: (ctx) => (typeof history === "function" ? history(ctx) : history), trackers: TRACKERS, search: {} });
+  assert.equal(await world.run("login", "amazon:Firma"), 0);
+
+  // Rendered a few reads after the load event.
+  history = ({ polls }) => (polls < 4 ? UNRENDERED : HISTORY);
+  world.chrome.navigations.length = 0;
+  world.logs.length = 0;
+  world.setClock("2026-09-29T11:00:00.000Z");
+  assert.equal(await world.run("refresh"), 0);
+  assert.ok(world.logs.includes("refresh: amazon read 4 page(s), 3 Shipment(s)"), world.logs.join("\n"));
+  assert.equal(world.chrome.navigations.length, 4);
+
+  // Never rendered: after about 10 s of reads the page is taken as it is.
+  history = UNRENDERED;
+  world.sleeps.length = 0;
+  world.setClock("2026-09-29T12:00:00.000Z");
+  assert.equal(await world.run("refresh"), 0);
+  const renderWaits = world.sleeps.filter((ms) => ms === 1000).length;
+  assert.ok(renderWaits >= 9 && renderWaits <= 11, `${renderWaits} render waits`);
+  assert.equal((await connection(world)).health, "ok");
+});
+
+test("the order search waits for the Business cards to render too", async (t) => {
+  const found = businessHistoryPage([{ orderId: MANUAL, shipments: [{ packageIndex: 0, shipmentId: "Tbiz00003", title: "Aktenschrank" }] }]);
+  const { world } = await businessWorld(t, { history: HISTORY, trackers: TRACKERS, search: { [MANUAL]: ({ polls }) => (polls < 4 ? businessHistoryPage([], { pending: 1 }) : found) } });
+  assert.equal(await world.run("login", "amazon:Firma"), 0);
+  assert.equal(await world.run("add", MANUAL), 0);
+
+  assert.equal(await world.run("refresh"), 0);
+
+  assert.equal((await world.shipment(`amazon:${MANUAL}#0`))?.account, "Firma");
+});
+
+test("a Login whose first sync saw only unrendered Business cards keeps the next run that reads them quiet", async (t) => {
+  const DELIVERED = { shortStatus: "DELIVERED", progressTracker: { lastReachedMilestone: "DELIVERED", numberOfReachedMilestones: 4 } };
+  const trackers = { ...tracker(SPLIT, 0, DELIVERED), ...tracker(SPLIT, 1), ...tracker(SINGLE, 0) };
+  const routes = { history: UNRENDERED, trackers, search: {} };
+  const { world } = await businessWorld(t, routes);
+
+  // The cards never render during the Login: its first sync lists nothing.
+  assert.equal(await world.run("login", "amazon:Firma"), 0);
+  assert.equal((await connection(world)).health, "ok");
+  assert.equal((await world.shipmentsFile()).shipments.filter((s) => s.account === "Firma").length, 0);
+
+  // The next refresh reads them all, one Delivered: the backlog, told nothing
+  // (no `new`, no `status`).
+  routes.history = HISTORY;
+  world.setClock("2026-09-29T11:00:00.000Z");
+  assert.equal(await world.run("refresh"), 0);
+  const file = await world.shipmentsFile();
+  assert.deepEqual(file.shipments.filter((s) => s.account === "Firma").map((s) => [s.key, s.status]).sort(), [
+    [`amazon:${SPLIT}#0`, "Delivered"], [`amazon:${SPLIT}#1`, "In transit"], [`amazon:${SINGLE}#0`, "In transit"],
+  ]);
+  assert.deepEqual(file.events, []);
+
+  // From then on, changes are told as usual.
+  routes.trackers = { ...trackers, ...tracker(SINGLE, 0, DELIVERED) };
+  world.setClock("2026-09-29T12:00:00.000Z");
+  assert.equal(await world.run("refresh"), 0);
+  assert.deepEqual((await world.shipmentsFile()).events.map((e) => [e.kind, e.key, e.status]), [["status", `amazon:${SINGLE}#0`, "Delivered"]]);
+});
