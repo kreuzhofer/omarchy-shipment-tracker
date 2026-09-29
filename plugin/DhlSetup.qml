@@ -1,6 +1,6 @@
 // The DHL row's setup (#18 §3): what it does, its state, and Log in to DHL.
 // The Login runs `login dhl` as a transient unit (Store.login); the row shows
-// its progress with Cancel.
+// its progress with Cancel. Disconnect asks inline first (#32).
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -16,6 +16,8 @@ Column {
   readonly property bool loggingIn: !!login && login.key === "dhl"
   readonly property bool syncing: loggingIn && !!login.connection && !!login.connection.login && login.connection.login.phase === "syncing"
   readonly property bool canLogIn: !!store && !login && store.nodeOk !== false
+  readonly property bool connected: health === "ok" || health === "needs-login" || health === "source-down"
+  readonly property bool confirming: !!store && (store.confirmingRemoval === "dhl" || store.removingKey === "dhl")
   spacing: Style.space(8)
 
   NodeNotice { width: root.width; store: root.store; fg: root.fg; ff: root.ff }
@@ -52,8 +54,21 @@ Column {
       bordered: true; text: enabled ? "Retry now" : "Retrying…"; fontSize: Style.font.bodySmall
       onClicked: root.store.retry("dhl")
     }
-    // #32: Disconnect (ok / needs-login / source-down) and its inline
-    // confirmation go here.
+    Button {
+      visible: !root.loggingIn && root.connected && !root.confirming
+      enabled: !!root.store && !root.store.removalRuns
+      opacity: enabled ? 1 : 0.45
+      bordered: true; text: "Disconnect"; fontSize: Style.font.bodySmall
+      onClicked: root.store.askRemove("dhl")
+    }
+  }
+
+  RemoveConfirm {
+    width: root.width
+    store: root.store; fg: root.fg; ff: root.ff
+    connectionKey: "dhl"
+    action: "Disconnect"
+    question: "Disconnect DHL? This deletes its Chrome login profile and sign-in."
   }
 
   // Only one Login at a time: say which one to finish first.

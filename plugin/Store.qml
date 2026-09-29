@@ -486,6 +486,46 @@ Item {
     }
   }
 
+  // ---- Removing and disconnecting (#32). Each Connection's row asks first,
+  // inline (RemoveConfirm.qml), one row at a time. An Amazon account runs
+  // `accounts remove <label>` (up to 90 s while a refresh reads it), DHL and
+  // mail `disconnect <key>`. The rows and the list follow sources.json and
+  // shipments.json; no Connection left set up is the first-run state.
+  property string confirmingRemoval: ""
+  property string removingKey: ""
+  property string removeError: ""
+  property string removeErrorKey: ""
+  readonly property bool removalRuns: removeConnectionProcess.running
+  function askRemove(key) {
+    if (!key || removeConnectionProcess.running) return
+    root.removeError = ""
+    root.confirmingRemoval = key
+  }
+  function keepConnection() { root.confirmingRemoval = "" }
+  function removeConnection(key) {
+    if (!key || removeConnectionProcess.running) return
+    root.confirmingRemoval = ""
+    root.removeError = ""
+    root.removingKey = key
+    removeConnectionProcess.command = key.indexOf("amazon:") === 0
+      ? ["node", root.cliPath, "accounts", "remove", key.substring(7)]
+      : ["node", root.cliPath, "disconnect", key]
+    removeConnectionProcess.running = true
+  }
+  Process {
+    id: removeConnectionProcess
+    stderr: StdioCollector { id: removeStderr }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0) {
+        var message = String(removeStderr.text || "").trim().replace(/^(accounts|disconnect): /, "")
+        root.removeError = message !== "" ? message : "Couldn't remove it (is Node.js installed?)"
+        root.removeErrorKey = root.removingKey
+      }
+      root.removingKey = ""
+      root.reloadFiles()
+    }
+  }
+
   // The hourly refresh timer: null until checked, then true / false. The
   // Sources page offers uninstalling it (before removing the widget; while
   // the widget stays, it installs the timer again when the shell starts).

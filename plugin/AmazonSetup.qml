@@ -44,6 +44,7 @@ Column {
         : loggingIn ? Shipments.rowLoginText(key, root.login.connection, root.store.nowMs)
         : Shipments.rowHealthText(key, c, root.store.nowMs) || (health === "not-set-up" ? "Not signed in yet" : "")
       readonly property string tone: Shipments.connectionTone(c, loggingIn)
+      readonly property bool confirming: !!root.store && (root.store.confirmingRemoval === key || root.store.removingKey === key)
       width: root.width
       height: accountColumn.implicitHeight + Style.space(12)
       radius: Style.cornerRadius
@@ -102,8 +103,16 @@ Column {
               bordered: true; text: "Retry"; fontSize: Style.font.bodySmall
               onClicked: root.store.retry(account.key)
             }
-            // #32: the trash button (Remove this account and its Chrome
-            // profile) and its inline confirmation go here.
+            PanelActionButton {
+              visible: !account.loggingIn && !account.confirming
+              enabled: !!root.store && !root.store.removalRuns
+              opacity: enabled ? 1 : 0.45
+              iconText: "\u{F0A7A}" // trash can
+              tooltipText: "Remove this account and its Chrome profile"
+              foreground: root.fg
+              hoverColor: Color.urgent
+              onClicked: root.store.askRemove(account.key)
+            }
           }
         }
         Text {
@@ -119,6 +128,12 @@ Column {
           wrapMode: Text.WordWrap
           text: root.store ? root.store.loginBlockedText : ""
           color: root.muted; font.family: root.ff; font.pixelSize: Style.font.caption
+        }
+        RemoveConfirm {
+          width: parent.width
+          store: root.store; fg: root.fg; ff: root.ff
+          connectionKey: account.key
+          question: "Remove " + Shipments.connectionName(account.key, account.c) + "? This deletes its Chrome profile and sign-in."
         }
       }
     }

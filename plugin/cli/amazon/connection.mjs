@@ -9,6 +9,7 @@
 // (neither success nor failure), a Login or a remove waits up to 90 s for it
 // (one account's run takes about 40 s).
 import { mkdir, rm, stat } from "node:fs/promises";
+import { forgetConnection } from "../disconnect.mjs";
 import { clearUpdatedDismissals } from "../dismiss.mjs";
 import { markKnown, recordEvents } from "../events.mjs";
 import { connectionRecord, recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
@@ -20,7 +21,7 @@ import { droppedKeys, isDropped } from "../retention.mjs";
 import { readState, updateState } from "../state.mjs";
 import { openAccountBrowser, profileDirFor } from "./browser.mjs";
 import { orderDetailsUrl } from "./pages.mjs";
-import { applyOwnership, hasManualOrders, ordersToLookFor, releaseOwnership, settleLinkOnly } from "./manual.mjs";
+import { applyOwnership, hasManualOrders, ordersToLookFor, settleLinkOnly } from "./manual.mjs";
 import { readAccount, waitForSignIn } from "./read.mjs";
 import { localHour } from "./status.mjs";
 
@@ -68,15 +69,14 @@ export async function addAccount(label, { acceptRisk }, { stateDir, now }) {
   });
 }
 
-// `accounts remove <label>`: deletes the profile and the Shipments known only
-// through this account.
-export async function removeAccount(label, { stateDir, env }) {
+// `accounts remove <label>`: deletes the account's key, its Shipments known
+// only through it (see disconnect.mjs) and its profile. A manual Order it
+// owned goes back to being looked for, or is link-only.
+export async function removeAccount(label, { stateDir, env, now }) {
   const key = connectionKey(label);
-  const removed = await updateState(stateDir, ({ sources, shipments }) => {
-    if (!sources.connections[key]) return false;
-    delete sources.connections[key];
-    // A manual Order it owned goes back to being looked for (or link-only).
-    shipments.shipments = releaseOwnership(shipments.shipments, key);
+  const removed = await updateState(stateDir, (state) => {
+    if (!state.sources.connections[key]) return false;
+    forgetConnection(state, key, now());
     return true;
   });
   const profileDir = profileDirFor(env, label);

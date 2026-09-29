@@ -15,6 +15,11 @@ export function stateDirFor(env) {
   return join(base, APP);
 }
 
+// Login profiles live in the data dir (Amazon per label, DHL beside them).
+export function dataDirFor(env) {
+  return join(env.XDG_DATA_HOME || join(env.HOME, ".local/share"), APP);
+}
+
 const emptyShipments = () => ({ shipments: [], dropped: [], lastEventId: 0, events: [] });
 const emptySources = () => ({ lastRun: null, lastOnline: null, refreshing: null, offline: false, connections: {} });
 

@@ -9,6 +9,7 @@
 // Logs carry counts and Health only, never tracking numbers, names or addresses.
 import { addAccount, loginAmazon, removeAccount } from "./amazon/connection.mjs";
 import { addManualOrder } from "./amazon/manual.mjs";
+import { disconnect } from "./disconnect.mjs";
 import { dismiss, undismiss } from "./dismiss.mjs";
 import { login as loginDhl } from "./login.mjs";
 import { clearStale } from "./logins.mjs";
@@ -30,6 +31,7 @@ const USAGE = `usage: shipment-tracker <command>
                          register an amazon.de account (then: login amazon:<label>)
   accounts remove <label>
                          remove it, its Chrome profile and its Shipments
+  disconnect dhl         log out of DHL: delete its token, login profile and Shipments
   refresh [--source <key>]
                          one refresh run (all Connections, or one)
   clear-stale-logins     end Logins whose process is gone as failed (the plugin runs it on load)
@@ -53,6 +55,8 @@ export async function main(argv, deps) {
       return login(args, run);
     case "accounts":
       return accounts(args, run);
+    case "disconnect":
+      return disconnect(args, run);
     case "refresh": {
       const source = refreshSource(args);
       if (source === undefined) {
@@ -93,6 +97,8 @@ async function add(args, stateDir, { now, log, out }) {
     const existing = findByTrackingNumber(shipments.shipments, parsed.id);
     if (existing) {
       if (!existing.connections.includes("manual")) existing.connections.push("manual");
+      // It stays a DHL Shipment should the Amazon account go (see merge.mjs).
+      if (existing.source === "Amazon") existing.manualTrackingNumber = true;
       return false;
     }
     shipments.shipments.push(shipment);

@@ -8,6 +8,7 @@
 // from DHL; Amazon readings then only refresh its title. A DHL answer without
 // tracking information (Unknown) doesn't take over: Amazon's own reading says
 // more.
+import { trackingPageUrl } from "./dhl/search.mjs";
 import { applyReading } from "./shipments.mjs";
 
 // The Shipment that holds this tracking number: the Amazon one when it is
@@ -49,6 +50,8 @@ export function absorbDhlTwin(list, amazon) {
   if (i < 0) return false;
   const [dhl] = list.splice(i, 1);
   for (const c of dhl.connections) if (!amazon.connections.includes(c)) amazon.connections.push(c);
+  // A DHL number added by hand stays one when the Amazon side goes (releaseToDhl).
+  if (dhl.connections.includes("manual")) amazon.manualTrackingNumber = true;
   if (dhl.discoveredAt < amazon.discoveredAt) amazon.discoveredAt = dhl.discoveredAt;
   const detailed = dhl.status !== "Unknown" && Boolean(dhl.lastSeenAt);
   if (detailed) {
@@ -68,6 +71,30 @@ export function absorbDhlTwin(list, amazon) {
     amazon.dismissedAs = dhl.dismissedAs;
   }
   return true;
+}
+
+// Whether this Amazon Shipment, having lost its Amazon account, still has a
+// DHL side: the Sendungsliste lists it, or its DHL number was added by hand.
+export const hasDhlSide = (s) => Boolean(s.trackingNumber)
+  && (s.connections.includes("dhl") || (s.manualTrackingNumber === true && s.connections.includes("manual")));
+
+// The other way round, when the Amazon account is removed: the Shipment turns
+// back into a DHL Shipment keyed on its tracking number. It keeps its
+// Connections (a "manual" mark included), DHL's detail, its notification mark
+// and a dismissal, so nothing is announced again; the Order's title stays until
+// DHL names a sender. Amazon's own Estimate no longer counts towards Delayed.
+export function releaseToDhl(s) {
+  if (s.detail !== "DHL") {
+    s.delayed = false;
+    delete s.lastWindowTo;
+  }
+  s.key = `dhl:${s.trackingNumber}`;
+  s.source = "DHL";
+  s.account = null;
+  s.carrier = "DHL";
+  s.url = trackingPageUrl(s.trackingNumber);
+  for (const field of ["orderId", "detail", "probedBy", "linkOnly", "manualTrackingNumber"]) delete s[field];
+  return s;
 }
 
 // From now on DHL's readings set Status, Estimate and Delayed; Amazon's
