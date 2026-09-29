@@ -72,12 +72,15 @@ function trackerReading(target, { state, carrierText }, now, timeZone) {
   const packageIndex = String(state.packageIndex ?? target.packageIndex);
   const trackingNumber = state.trackingId || null;
   const { status, mapped } = amazonStatus(state);
+  const estimate = parseEstimate(state.promise?.promiseMessage, now, timeZone);
   return {
     key: shipmentKey({ orderId, packageIndex }),
     orderId,
     status,
     mapped,
-    estimate: parseEstimate(state.promise?.promiseMessage, now, timeZone),
+    estimate,
+    // The window end Delayed compares against (see applyReading).
+    window: estimate?.to ?? null,
     title: target.title,
     trackingNumber,
     carrier: inferCarrier(carrierText, trackingNumber),

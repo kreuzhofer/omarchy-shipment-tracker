@@ -185,6 +185,7 @@ test("refresh reads the history, then the tracker pages, into Amazon rows", asyn
     status: "In transit",
     estimate: { from: "2026-09-30", to: "2026-09-30", text: "Lieferung morgen" },
     delayed: false,
+    lastWindowTo: "2026-09-30",
     orderId: DHL_ORDER,
     url: ORDER_PAGE + DHL_ORDER,
     trackingNumber: DHL_NUMBER,
@@ -500,7 +501,7 @@ test("a Login fixes needs-login; a first sync that then fails leaves the account
   assert.equal(conn.lastCount, 3);
 });
 
-// ---- Together with #23 (refreshing) and #24 (the DHL
+// ---- Together with #23 (Estimate, Delayed, refreshing) and #24 (the DHL
 // Connection, its fixed login port, --source).
 
 test("no Amazon account's Chrome ever gets the DHL login window's port", async (t) => {
@@ -515,6 +516,25 @@ test("no Amazon account's Chrome ever gets the DHL login window's port", async (
   assert.equal(new Set(ports).size, ports.length);
   await world.run("login", "amazon:Again");
   assert.notEqual(world.chrome.launches[0].port, DHL_LOGIN_PORT);
+});
+
+test("an Amazon Estimate that moves later marks the Shipment Delayed", async (t) => {
+  const trackers = { ...TRACKERS };
+  const world = await amazonWorld(t, { history: HISTORY, trackers });
+  await connectedAccount(world);
+  assert.equal((await world.shipment(`amazon:${NEW_ORDER}#0`)).delayed, false);
+
+  trackers[`${NEW_ORDER}#0`] = trackerPage({
+    orderId: NEW_ORDER, packageIndex: "0", shortStatus: "ORDERED",
+    progressTracker: { lastTransitionPercentComplete: 0, lastReachedMilestone: "ORDERED", numberOfReachedMilestones: 1 },
+    promise: { promiseMessage: "Lieferung 9. – 10. Oktober" },
+  });
+  world.setClock("2026-09-29T11:00:00.000Z");
+  await world.run("refresh");
+
+  const s = await world.shipment(`amazon:${NEW_ORDER}#0`);
+  assert.equal(s.delayed, true);
+  assert.equal(s.estimate.to, "2026-10-10");
 });
 
 test("the run reads DHL first, then Amazon, and stays Refreshing… until Amazon is done", async (t) => {
