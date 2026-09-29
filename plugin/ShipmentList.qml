@@ -1,6 +1,6 @@
 // The list page of the popup (layout from the #9 prototype, variant A):
-// header with the 7 / 30 days switch and refresh, one row per Shipment,
-// footer with the manual-add field.
+// header with the 7 / 30 days switch and refresh, one banner per troubled
+// Connection, one row per Shipment, footer with the manual-add field.
 // Row: Status glyph | title + Delayed tag | Estimate; muted line Status ·
 // Direction · Source · age. Ready for pickup and Problem rows get a rail;
 // Ready for pickup also a tint and the accent Estimate; Terminal rows are dimmed.
@@ -40,7 +40,8 @@ Column {
         elide: Text.ElideRight
         text: !root.store ? "" : root.store.summary + (root.store.refreshing ? "Refreshing…"
           : root.store.lastRun === "" ? "Not refreshed yet"
-          : (root.store.sourcesState.offline ? "Offline · updated " : "Updated ") + Shipments.age(root.store.lastRun, root.store.nowMs))
+          : root.store.sourcesState.offline ? "Offline · updated " + Shipments.age(root.store.lastOnline, root.store.nowMs)
+          : "Updated " + Shipments.age(root.store.lastRun, root.store.nowMs))
         color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.caption
       }
     }
@@ -58,6 +59,65 @@ Column {
         tooltipText: "Refresh now"
         foreground: root.fg
         onClicked: root.store.refresh()
+      }
+    }
+  }
+
+  // ---- One banner per troubled Connection (#9, #19). Above the list, so the
+  // empty state keeps it too: an empty list never hides a lost login.
+  // needs-login: urgent, lock, Log in (Open for a security check);
+  // source-down: muted warning, Retry.
+  Repeater {
+    model: root.store ? root.store.troubled : []
+    delegate: Rectangle {
+      id: banner
+      required property var modelData
+      readonly property var c: modelData.connection
+      readonly property bool down: c.health === "source-down"
+      readonly property color tone: down ? Qt.darker(root.fg, 1.3) : Color.urgent
+      width: root.width
+      height: Math.max(bannerText.implicitHeight, bannerButton.implicitHeight) + Style.space(12)
+      radius: Style.cornerRadius
+      color: Qt.rgba(tone.r, tone.g, tone.b, down ? 0.08 : 0.18)
+      border.color: down ? Qt.rgba(tone.r, tone.g, tone.b, 0.45) : tone
+      border.width: 1
+
+      Text {
+        id: bannerGlyph
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        text: banner.down ? "\u{F0026}" : "\u{F033E}" // alert / lock
+        color: banner.tone; font.family: root.ff; font.pixelSize: Style.font.icon
+      }
+      Text {
+        id: bannerText
+        anchors.left: bannerGlyph.right
+        anchors.leftMargin: Style.space(8)
+        anchors.right: bannerButton.left
+        anchors.rightMargin: Style.space(8)
+        anchors.verticalCenter: parent.verticalCenter
+        wrapMode: Text.WordWrap
+        maximumLineCount: 2
+        elide: Text.ElideRight
+        text: root.store ? Shipments.bannerText(banner.modelData.key, banner.c, root.store.nowMs) : ""
+        color: banner.down ? Qt.darker(root.fg, 1.15) : root.fg
+        font.family: root.ff; font.pixelSize: Style.font.bodySmall
+      }
+      Button {
+        id: bannerButton
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(6)
+        anchors.verticalCenter: parent.verticalCenter
+        readonly property string actionText: Shipments.bannerAction(banner.c)
+        // Retry waits for the run it started.
+        enabled: !(actionText === "Retry" && root.store && root.store.refreshing)
+        text: enabled ? actionText : "Retrying…"
+        bordered: true; fontSize: Style.font.bodySmall
+        onClicked: {
+          if (actionText === "Retry") root.store.retry(banner.modelData.key)
+          else root.store.login(banner.modelData.key)
+        }
       }
     }
   }

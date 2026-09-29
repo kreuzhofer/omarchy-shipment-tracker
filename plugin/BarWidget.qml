@@ -1,4 +1,6 @@
-// Bar icon: a shipping box. Click toggles the popup. No count badge.
+// Bar icon: a shipping box. Click toggles the popup. No count badge. Active
+// when a Shipment is Ready for pickup or has a Problem, or a Connection needs
+// a login or can't be read; the tooltip reads "N need you · M arriving today".
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -11,6 +13,7 @@ BarWidget {
   // widget's shell.json entry, on by default. The popup's bell flips it.
   readonly property bool notificationsOn: setting("notifications", true) === true
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
+  readonly property var store: panelLoader.item ? panelLoader.item.store : null
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
   function open() { if (panelLoader.item) panelLoader.item.open() }
@@ -52,8 +55,8 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "\u{F03D7}"
-    active: false
-    tooltipText: root.opened ? "" : "Shipments"
+    active: root.store ? root.store.needsYou : false
+    tooltipText: root.opened ? "" : root.store ? root.store.tooltip : "Shipments"
     onPressed: function(b) { root.toggle() }
   }
 }

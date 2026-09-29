@@ -56,6 +56,6 @@ test("a refresh with nothing to look up still records the run", async (t) => {
 
   assert.deepEqual(await world.shipmentsFile(), { shipments: [], dropped: [], lastEventId: 0, events: [] });
   assert.deepEqual(await world.sourcesFile(), {
-    lastRun: "2026-09-29T10:00:00.000Z", refreshing: null, offline: false, connections: {},
+    lastRun: "2026-09-29T10:00:00.000Z", lastOnline: "2026-09-29T10:00:00.000Z", refreshing: null, offline: false, connections: {},
   });
 });

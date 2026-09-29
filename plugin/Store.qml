@@ -69,11 +69,24 @@ Item {
     if (n === 7 || n === 30) root.days = n
   }
 
-  // Connections the user must fix or that can't be read; they count as "need you".
-  readonly property int troubledCount: {
+  // Connections the user must fix or that can't be read, one banner each:
+  // [{ key, connection }], DHL first. They count as "need you".
+  readonly property var troubled: {
     var c = sourcesState.connections || {}
-    return Object.keys(c).filter(function(k) { return c[k] && (c[k].health === "needs-login" || c[k].health === "source-down") }).length
+    return Object.keys(c).filter(function(k) { return Shipments.isTroubled(c[k]) }).sort(Shipments.connectionOrder)
+      .map(function(k) { return { key: k, connection: c[k] } })
   }
+  readonly property int troubledCount: troubled.length
+  // Any Connection past "not set up": until then the bar reads "not set up".
+  readonly property bool anySetUp: {
+    var c = sourcesState.connections || {}
+    return Object.keys(c).some(function(k) { return c[k] && c[k].health && c[k].health !== "not-set-up" })
+  }
+  // The bar icon: active when something needs the user; tooltip "N need you · M arriving today".
+  readonly property bool needsYou: Shipments.needsYou(shipments, troubledCount)
+  readonly property string tooltip: Shipments.tooltip(shipments, troubledCount, nowMs, anySetUp)
+  // Offline: "updated … ago" is the last run that got through.
+  readonly property string lastOnline: sourcesState.lastOnline || lastRun
   // A run that died without clearing `refreshing` stops counting after 15 min.
   readonly property bool refreshing: !!sourcesState.refreshing && !!sourcesState.refreshing.startedAt
     && nowMs - new Date(sourcesState.refreshing.startedAt).getTime() < 15 * 6e4
@@ -139,6 +152,22 @@ Item {
   // "Refresh now": the oneshot service serializes with the hourly timer.
   function refresh() {
     Quickshell.execDetached(["systemctl", "--user", "start", "--no-block", root.refreshUnit])
+  }
+
+  // Retry on a source-down banner: the refresh service for that one
+  // Connection (the template instance runs `refresh --source <key>`).
+  function retry(key) {
+    if (!key) return
+    Quickshell.execDetached(["systemctl", "--user", "start", "--no-block", "shipment-tracker-refresh@" + Shipments.systemdEscape(key) + ".service"])
+  }
+
+  // Log in / Open on a needs-login banner: `login <key>` as a transient unit,
+  // so it survives a shell restart and can't run twice. The Login lifecycle
+  // (progress banner, deadline, one at a time, Cancel) is #30's.
+  function login(key) {
+    if (!key) return
+    Quickshell.execDetached(["systemd-run", "--user", "--collect", "--quiet", "--unit=shipment-tracker-login-" + Shipments.systemdEscape(key),
+      "node", root.cliPath, "login", key])
   }
 
   // Returns true when the text was taken (the field can clear).

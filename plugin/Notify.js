@@ -32,9 +32,9 @@ function claim(state) {
 
 // The command for one notification, through Omarchy's own sender so a click
 // still works after a shell restart (the action rides along as an argv). A
-// Shipment's opens its page; a summary opens the popup.
+// Shipment's opens its page; a summary or connection event (no url) opens the popup.
 function command(e, omarchyBin) {
-  var glyph = e.kind === "summary" ? "\u{F03D7}" : Shipments.statusGlyph(e.status)
+  var glyph = e.kind === "summary" ? "\u{F03D7}" : e.kind === "connection" ? "\u{F033E}" : Shipments.statusGlyph(e.status)
   var argv = [omarchyBin + "omarchy-notification-send", "--app-name", "Shipment tracker", "-u", "normal", "-g", glyph,
     String(e.title || "Shipments"), String(e.body || "")]
   if (e.url) return argv.concat(["--exec", "xdg-open", String(e.url)])

@@ -118,3 +118,89 @@ function amazonOrderUrl(orderId) {
 function dhlTrackingUrl(trackingNumber) {
   return "https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=" + encodeURIComponent(trackingNumber)
 }
+
+// ---- Connections and their Health (spec #21, "Health"; copy from #19)
+
+// "DHL", "Amazon · Business", "Microsoft 365 mail" (as the CLI's notifications name them).
+function connectionName(key, c) {
+  if (key === "dhl") return "DHL"
+  if (key === "mail") return "Microsoft 365 mail"
+  if (String(key).indexOf("amazon:") === 0) return "Amazon · " + ((c && c.label) || String(key).slice(7))
+  return String(key)
+}
+
+// Only the Source for "… changed its data format": the format is Amazon's, not the account's.
+function sourceName(key) {
+  return key === "dhl" ? "DHL" : key === "mail" ? "Microsoft 365 mail" : "Amazon"
+}
+
+function isTroubled(c) {
+  return !!c && (c.health === "needs-login" || c.health === "source-down")
+}
+
+// DHL, then the Amazon accounts, then mail.
+function connectionOrder(a, b) {
+  function rankOf(k) { return k === "dhl" ? 0 : k === "mail" ? 2 : 1 }
+  return (rankOf(a) - rankOf(b)) || String(a).localeCompare(String(b))
+}
+
+var weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+// "14:00" today, else "Mon 14:00" (local time).
+function clockText(iso, nowMs) {
+  if (!iso) return ""
+  var d = new Date(iso)
+  function pad(n) { return (n < 10 ? "0" : "") + n }
+  var time = pad(d.getHours()) + ":" + pad(d.getMinutes())
+  return localDay(d.getTime()) === localDay(nowMs) ? time : weekdays[d.getDay()] + " " + time
+}
+
+// The banner line for a troubled Connection.
+function bannerText(key, c, nowMs) {
+  var name = connectionName(key, c)
+  if (c.health === "needs-login") {
+    if (c.reason === "challenge") return name + " asks for a security check"
+    if (c.reason === "empty-list") return "DHL returned no Shipments, which usually means the login was lost"
+    return name + " needs a login · list may be incomplete"
+  }
+  if (c.reason === "shape") return sourceName(key) + " changed its data format · an update of the tracker is needed"
+  return name + " can't be read since " + clockText(c.since, nowMs) + " · showing what was last seen"
+}
+
+// The banner's button: Log in, Open (a security check) or Retry.
+function bannerAction(c) {
+  if (c.health === "source-down") return "Retry"
+  return c.reason === "challenge" ? "Open" : "Log in"
+}
+
+// The bar tooltip: "2 need you · 1 arriving today", "Shipments", or
+// "Shipments · not set up" before any Source or Shipment.
+function tooltip(shipments, troubledCount, nowMs, setUp) {
+  if (!setUp && shipments.length === 0) return "Shipments · not set up"
+  var text = summary(shipments, troubledCount, nowMs).replace(/ · $/, "")
+  return text !== "" ? text : "Shipments"
+}
+
+// Whether the bar icon is active: a Shipment is Ready for pickup or has a
+// Problem, or a Connection needs a login or can't be read.
+function needsYou(shipments, troubledCount) {
+  return troubledCount > 0 || shipments.some(function(s) { return attention[s.status] === true })
+}
+
+// systemd-escape for a unit instance name: [A-Za-z0-9:_.] stay (no leading
+// "."), "/" becomes "-", every other byte \xNN (UTF-8).
+function systemdEscape(text) {
+  var out = ""
+  var chars = Array.from(String(text))
+  for (var i = 0; i < chars.length; i++) {
+    var ch = chars[i]
+    if (/^[A-Za-z0-9:_]$/.test(ch) || (ch === "." && i > 0)) out += ch
+    else if (ch === "/") out += "-"
+    else {
+      var encoded = encodeURIComponent(ch)
+      if (encoded.charAt(0) === "%") out += encoded.replace(/%([0-9A-F]{2})/g, function(m, h) { return "\\x" + h.toLowerCase() })
+      else out += "\\x" + ch.charCodeAt(0).toString(16)
+    }
+  }
+  return out
+}

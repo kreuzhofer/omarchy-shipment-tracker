@@ -38,6 +38,7 @@ test("a number DHL doesn't know shows as Unknown, Incoming, 'Not known to DHL ye
   assert.equal(file.lastEventId, 0);
   assert.deepEqual(await world.sourcesFile(), {
     lastRun: "2026-09-29T10:05:00.000Z",
+    lastOnline: "2026-09-29T10:05:00.000Z",
     refreshing: null,
     offline: false,
     connections: {},

@@ -1,12 +1,15 @@
 // The systemd user units that drive refreshes (spec #21, "Architecture"): an
 // hourly timer with a randomized delay that catches up after suspend, and a
 // oneshot service so runs never overlap. "Refresh now" starts the service.
+// Retry on a banner starts the template instance for one Connection
+// (shipment-tracker-refresh@<systemd-escaped key>.service → refresh --source <key>).
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SERVICE = "shipment-tracker-refresh.service";
 export const TIMER = "shipment-tracker-refresh.timer";
+export const SOURCE_SERVICE = "shipment-tracker-refresh@.service";
 
 const unitDir = (env) => join(env.XDG_CONFIG_HOME || join(env.HOME, ".config"), "systemd/user");
 const quote = (arg) => `"${arg.replace(/["\\]/g, "\\$&")}"`;
@@ -19,6 +22,13 @@ Description=Shipment tracker refresh
 [Service]
 Type=oneshot
 ExecStart=${quote(nodePath)} ${quote(cliPath)} refresh
+`,
+    [SOURCE_SERVICE]: `[Unit]
+Description=Shipment tracker refresh of one Connection (%I)
+
+[Service]
+Type=oneshot
+ExecStart=${quote(nodePath)} ${quote(cliPath)} refresh --source "%I"
 `,
     [TIMER]: `[Unit]
 Description=Hourly Shipment tracker refresh
@@ -62,7 +72,7 @@ export async function uninstall({ env, exec, log }) {
   await systemctl(exec, ["disable", "--now", TIMER]);
   await systemctl(exec, ["stop", SERVICE]);
   const dir = unitDir(env);
-  for (const name of [SERVICE, TIMER]) await rm(join(dir, name), { force: true });
+  for (const name of [SERVICE, SOURCE_SERVICE, TIMER]) await rm(join(dir, name), { force: true });
   await systemctl(exec, ["daemon-reload"]);
   log(`uninstall: ${TIMER} removed`);
   return 0;
