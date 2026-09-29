@@ -16,7 +16,11 @@
 // DHL's Sendungsliste, say), one search each for the tracking number, at most
 // MAX_SEARCHES per run and never repeated (`mailSearchedAt`); the mail that
 // names the number goes through the same item ladder (#70, the #54 plan).
-// It only ever sets `itemTitle` / `itemSource`.
+// It only ever sets `itemTitle` / `itemSource`. Graph's $search matches whole
+// indexed words, and a number that only sits inside a link (`?piececode=…`)
+// may not be one, so a search that finds no mail naming the number falls
+// back to the mail this run already fetched (#75). A line of counts (never a
+// number or a subject) tells how the searches went.
 //
 // A mailbox that can't be read only changes this Connection's Health; it
 // never stops the other Sources. Health follows health.mjs: Softeria finding
@@ -93,26 +97,65 @@ function numbersToSearch(list, now) {
     .map((s) => s.trackingNumber);
 }
 
-// One search per number: [{ trackingNumber, message }], `message` the latest
-// mail naming the number verbatim, or null. A search that fails is left for
-// the next run; the first one failing ends the searches of this run.
+// Whether a mail names the number: verbatim in its subject or text body, also
+// when the body writes it in groups ("0034 0434 …").
+function namesNumber(m, trackingNumber) {
+  const text = `${m?.subject ?? ""}\n${typeof m?.body?.content === "string" ? m.body.content : ""}`.toUpperCase();
+  return text.includes(trackingNumber) || text.replace(/(?<=[0-9A-Z])[ \u00a0]+(?=[0-9A-Z])/g, "").includes(trackingNumber);
+}
+
+const latest = (messages) => [...messages].sort((a, b) => Date.parse(b.receivedDateTime) - Date.parse(a.receivedDateTime))[0] ?? null;
+
+// One search per number (the quoted number, which Softeria passes on to
+// Graph's $search as is): { results: [{ trackingNumber, message }], stats }.
+// `message` is the latest mail naming the number, or null. A search that
+// fails is left for the next run (it gets no result, so no `mailSearchedAt`);
+// the first one failing ends the searches of this run. `stats` counts
+// failed searches, mails returned and mails among them naming their number.
 async function searchNumbers(server, stateDir, numbers) {
   const results = [];
+  const stats = { failed: 0, returned: 0, naming: 0 };
   for (const trackingNumber of numbers) {
     let answer;
     try {
       answer = await search(server, stateDir, { search: `"${trackingNumber}"`, select: SELECT, top: SEARCH_TOP });
     } catch (e) {
       if (e.code !== "server") throw e;
+      stats.failed++;
       break;
     }
-    if (answer.reason) break;
-    const names = (m) => `${m?.subject ?? ""}\n${typeof m?.body?.content === "string" ? m.body.content : ""}`.toUpperCase().includes(trackingNumber);
-    const message = answer.messages.filter(names)
-      .sort((a, b) => Date.parse(b.receivedDateTime) - Date.parse(a.receivedDateTime))[0] ?? null;
-    results.push({ trackingNumber, message });
+    if (answer.reason) {
+      stats.failed++;
+      break;
+    }
+    const naming = answer.messages.filter((m) => namesNumber(m, trackingNumber));
+    stats.returned += answer.messages.length;
+    stats.naming += naming.length;
+    results.push({ trackingNumber, message: latest(naming) });
   }
-  return results;
+  return { results, stats };
+}
+
+// For each number its search found no mail for, the latest mail of this
+// run's other searches that names it. Returns how many were found so.
+function searchRecentMail(results, recent) {
+  let found = 0;
+  for (const r of results) {
+    if (r.message) continue;
+    r.message = latest(recent.filter((m) => namesNumber(m, r.trackingNumber)));
+    if (r.message) found++;
+  }
+  return found;
+}
+
+// "refresh: mail item search 5 number(s), 0 failed, 3 mail(s) returned, 1
+// naming its number, 1 found in recent mail; items named via schema 0, parser
+// 0, subject 2": counts only.
+function itemSearchLine({ stats, fromRecent }, searched) {
+  const via = (source) => searched.filter((n) => n.item?.itemSource === source).length;
+  return `refresh: mail item search ${searched.length} number(s), ${stats.failed} failed, ${stats.returned} mail(s) returned, `
+    + `${stats.naming} naming its number, ${fromRecent} found in recent mail; `
+    + `items named via schema ${via("schema")}, parser ${via("parser")}, subject ${via("subject")}`;
 }
 
 // Reads the mailbox: { ok: true, orders, numbers, searched, ignored } or { ok: false, reason }.
@@ -129,11 +172,11 @@ async function readMailbox({ stateDir, mcp, now, timeZone, known, toSearch }) {
   }
   let amazon;
   let dhl;
-  let searched = [];
+  let numberSearch = { results: [], stats: { failed: 0, returned: 0, naming: 0 } };
   try {
     amazon = await search(server, stateDir, AMAZON_SEARCH);
     if (!amazon.reason) dhl = await search(server, stateDir, DHL_SEARCH);
-    if (!amazon.reason && !dhl.reason) searched = await searchNumbers(server, stateDir, toSearch);
+    if (!amazon.reason && !dhl.reason) numberSearch = await searchNumbers(server, stateDir, toSearch);
   } catch (e) {
     if (e.code !== "server") throw e;
     return { ok: false, reason: "server" };
@@ -143,8 +186,11 @@ async function readMailbox({ stateDir, mcp, now, timeZone, known, toSearch }) {
   const reason = amazon.reason ?? dhl.reason;
   if (reason) return { ok: false, reason };
   const numbers = findNumbers(dhl.messages, daysBefore(now(), DHL_WINDOW_DAYS)).filter((n) => !known(n.trackingNumber));
+  const searched = numberSearch.results;
+  const fromRecent = searchRecentMail(searched, [...dhl.messages, ...amazon.messages]);
   await addItemInfo(numbers, searched, { stateDir, mcp });
-  return { ok: true, ...readMails(amazon.messages, daysBefore(now(), AMAZON_WINDOW_DAYS), timeZone), numbers, searched };
+  const itemSearch = { stats: numberSearch.stats, fromRecent };
+  return { ok: true, ...readMails(amazon.messages, daysBefore(now(), AMAZON_WINDOW_DAYS), timeZone), numbers, searched, itemSearch };
 }
 
 // The item ladder for each new number and each number searched for, on the
@@ -229,6 +275,7 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
   log(outcome.ok
     ? `refresh: mail ok, ${outcome.orders.length} Order(s), ${added} new DHL number(s), ${outcome.searched.length} searched for (${named} item(s) named)${outcome.ignored ? `, ${outcome.ignored} mail(s) ignored` : ""}`
     : `refresh: mail failed (${outcome.reason})`);
+  if (outcome.ok && (outcome.searched.length > 0 || outcome.itemSearch.stats.failed > 0)) log(itemSearchLine(outcome.itemSearch, outcome.searched));
   return { ...outcome, counted: countNetwork };
 }
 
