@@ -18,10 +18,19 @@ export function fixture(path) {
 // query parameter) to a recorded response: `{ json }`, `{ status, text }`,
 // `{ network: true }` for a connection failure, or a function returning a
 // Promise of one of those (to hold a request open).
+// `routes.online` answers the connectivity check an offline run polls while
+// it waits for the network (a HEAD request to https://www.dhl.de/); by
+// default the network stays down.
 export function fakeDhl(routes) {
   return {
-    async fetch(url) {
+    async fetch(url, { method = "GET" } = {}) {
       const u = new URL(url);
+      if (u.host === "www.dhl.de" && u.pathname === "/" && method === "HEAD") {
+        let r = routes.online ?? { network: true };
+        if (typeof r === "function") r = await r();
+        if (r.network) throw Object.assign(new Error("fake network failure"), { code: "network" });
+        return { status: r.status ?? 200, text: "" };
+      }
       if (u.host !== "www.dhl.de" || u.pathname !== "/int-verfolgen/data/search") {
         throw Object.assign(new Error(`unexpected request to ${u.host}${u.pathname}`), { code: "unexpected" });
       }

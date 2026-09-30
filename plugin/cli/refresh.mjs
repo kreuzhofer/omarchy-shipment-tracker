@@ -27,12 +27,19 @@
 // Item images not cached yet are fetched after every Connection, so they
 // never sit between amazon.de pages; files nothing references any more go
 // with the retention sweep (see images.mjs).
+//
+// Offline after a resume (#79): a full run in which every Connection failed on
+// the network waits for the network (see connectivity.mjs) and, once it's
+// back, runs the Sources once more. Nothing is locked while it waits, and
+// the header reads "Offline" meanwhile. A `--source` run (Retry, a Login's
+// first sync) fails fast.
 import { refreshAmazon } from "./amazon/connection.mjs";
 import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
 import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
 import { KEY as MAIL, refreshMail } from "./mail/connection.mjs";
+import { waitForNetwork } from "./connectivity.mjs";
 import { clearUpdatedDismissals } from "./dismiss.mjs";
 import { firstSyncConnections, markKnown, recordEvents } from "./events.mjs";
 import { recordConnectionEvents, recordFailure } from "./health.mjs";
@@ -54,7 +61,21 @@ const needsLookup = (s) => !TERMINAL.has(s.status)
 
 // `firstSync`: this run is the first sync of the `source` Connection after a
 // Login, so what it discovers is not announced as new.
-export async function refresh({ stateDir, env, now, transport, chrome, mcp, sleep, timeZone, log, exec, source = null, firstSync = false }) {
+export async function refresh(run) {
+  const offline = await refreshOnce(run);
+  if (!offline || (run.source ?? null) !== null || run.firstSync) return 0;
+  run.log("refresh: offline, waiting for the network");
+  if (!(await waitForNetwork(run))) {
+    run.log("refresh: still offline, giving up until the next run");
+    return 0;
+  }
+  run.log("refresh: network is back, running again");
+  await refreshOnce(run);
+  return 0;
+}
+
+// One pass over the Sources. Returns whether it was offline.
+async function refreshOnce({ stateDir, env, now, transport, chrome, mcp, sleep, timeZone, log, exec, source = null, firstSync = false }) {
   const attempted = new Set();
   const counts = { lookedUp: 0, unknown: 0, failed: 0, network: 0, synced: 0 };
   // Called by every part of the run that got to write its results.
@@ -179,5 +200,5 @@ export async function refresh({ stateDir, env, now, transport, chrome, mcp, slee
   if (told > 0) log(`refresh: ${told} notification event(s)`);
 
   log(`refresh: looked up ${counts.lookedUp} (${counts.unknown} unknown), ${counts.failed} failed${counts.network ? `, ${counts.network} offline` : ""}`);
-  return 0;
+  return counts.network > 0 && counts.network === counts.failed && counts.lookedUp === 0 && counts.synced === 0;
 }

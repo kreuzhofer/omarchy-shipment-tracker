@@ -20,10 +20,10 @@ async function readCapped(response, maxBytes) {
 }
 
 export const httpTransport = {
-  async fetch(url, { method = "GET", headers = {}, body } = {}) {
+  async fetch(url, { method = "GET", headers = {}, body, timeoutMs = TIMEOUT_MS } = {}) {
     let response;
     try {
-      response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(TIMEOUT_MS) });
+      response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(timeoutMs) });
       return { status: response.status, text: await response.text() };
     } catch (e) {
       throw Object.assign(new Error(`network: ${e.name}`), { code: "network" });

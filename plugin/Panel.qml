@@ -39,6 +39,7 @@ Panel {
     if (opened) {
       backend.nowMs = Date.now()
       backend.checkNode()
+      backend.refreshIfStale()
     } else {
       backend.setPage("list")
     }
