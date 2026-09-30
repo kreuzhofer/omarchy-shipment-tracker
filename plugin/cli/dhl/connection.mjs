@@ -10,6 +10,7 @@ import { connectionRecord, recordFailure, recordOk } from "../health.mjs";
 import { applyDhlReading, findByTrackingNumber } from "../merge.mjs";
 import { manualDhlShipment, TERMINAL } from "../shipments.mjs";
 import { renewIdToken } from "./auth.mjs";
+import { applyLive, readLiveTracking } from "./live.mjs";
 import { search } from "./search.mjs";
 import { readDhlElement } from "./status.mjs";
 
@@ -77,7 +78,8 @@ async function readInbox({ stateDir, transport, now }) {
 // the tracking numbers the Sendungsliste listed. Its Direction wins over a
 // manual add's default. A number an Amazon Shipment carries goes to that
 // Shipment (see merge.mjs). A failed sync never changes or deletes Shipments.
-export function applyDhlSync({ shipments, sources }, outcome, now) {
+// An Out for delivery Shipment also gets DHL's live tour data (see live.mjs).
+export function applyDhlSync({ shipments, sources }, outcome, now, timeZone) {
   const listed = new Set();
   if (!outcome.ok && outcome.reason === "not-set-up") return listed;
   const connection = connectionRecord(sources, KEY);
@@ -103,7 +105,10 @@ export function applyDhlSync({ shipments, sources }, outcome, now) {
     // Terminal Shipments never change again.
     if (TERMINAL.has(shipment.status)) continue;
     const reading = listing.complete ? readDhlElement(element) : null;
-    if (reading) applyDhlReading(shipment, reading, now);
+    if (reading) {
+      applyDhlReading(shipment, reading, now);
+      applyLive(shipment, readLiveTracking(element), now, timeZone);
+    }
     if (listing.title && shipment.source === "DHL") shipment.title = listing.title;
   }
   recordOk(connection, now, outcome.elements.length);

@@ -45,6 +45,8 @@ export function applyReading(shipment, reading, now) {
   const changed = shipment.status !== reading.status
     || JSON.stringify(shipment.estimate) !== JSON.stringify(reading.estimate);
   shipment.status = reading.status;
+  // DHL's live tour data only lasts while Out for delivery (see dhl/live.mjs).
+  if (reading.status !== "Out for delivery") delete shipment.live;
   shipment.estimate = reading.estimate;
   if (reading.title) shipment.title = reading.title;
   // The latest tracking event, as the Source identifies it (see dismiss.mjs).

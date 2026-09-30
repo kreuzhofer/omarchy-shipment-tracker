@@ -30,6 +30,14 @@ function claim(state) {
   return fresh
 }
 
+// What to send now: the fresh events, or none while the user has
+// notifications off (they are claimed all the same, so turning them back on
+// replays nothing).
+function pending(state, notificationsOn) {
+  var fresh = claim(state)
+  return notificationsOn ? fresh : []
+}
+
 // The command for one notification, through Omarchy's own sender so a click
 // still works after a shell restart (the action rides along as an argv). A
 // Shipment's opens its page; a summary or connection event (no url) opens the popup.

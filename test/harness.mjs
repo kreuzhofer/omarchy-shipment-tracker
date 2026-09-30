@@ -228,6 +228,8 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
     output: [],
     // systemd user units that `systemctl --user is-active` reports running.
     activeUnits: new Set(),
+    // Every other `systemctl --user …` call (install, uninstall), as its args.
+    systemctl: [],
     cancelListeners: new Set(),
     // What Cancel (the unit's SIGTERM) or Ctrl-C does to a running Login.
     cancel() { for (const fn of world.cancelListeners) fn(); },
@@ -246,6 +248,10 @@ export async function makeWorld({ now = "2026-09-29T10:00:00.000Z", transport = 
         out: (line) => world.output.push(line),
         exec: async (file, args) => {
           if (file === "systemctl" && args[0] === "--user" && args[1] === "is-active") return { code: world.activeUnits.has(args.at(-1)) ? 0 : 3, stdout: "", stderr: "" };
+          if (file === "systemctl" && args[0] === "--user" && ["daemon-reload", "enable", "disable", "stop"].includes(args[1])) {
+            world.systemctl.push(args.slice(1));
+            return { code: 0, stdout: "", stderr: "" };
+          }
           throw Object.assign(new Error(`unexpected command ${file} ${args.join(" ")}`), { code: "unexpected" });
         },
         onCancel: (fn) => {
