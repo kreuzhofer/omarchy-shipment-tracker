@@ -7,6 +7,7 @@ import Quickshell
 import Quickshell.Io
 import "Shipments.js" as Shipments
 import "Notify.js" as Notify
+import "Freshness.js" as Freshness
 
 Item {
   id: root
@@ -172,6 +173,37 @@ Item {
   // "Refresh now": the oneshot service serializes with the hourly timer.
   function refresh() {
     Quickshell.execDetached(["systemctl", "--user", "start", "--no-block", root.refreshUnit])
+  }
+
+  // After a resume (#79) the timer's catch-up run may find no network. The
+  // popup refreshes a stale or offline list when it opens, and once about
+  // 30 s after the machine woke up; at most once per 5 minutes (Freshness.js).
+  property double lastAutoRefreshMs: 0
+  function refreshIfStale() {
+    if (root.nothingTracked) return
+    var now = Date.now()
+    if (!Freshness.shouldRefresh(root.sourcesState, now, root.lastAutoRefreshMs, root.refreshing)) return
+    root.lastAutoRefreshMs = now
+    root.refresh()
+  }
+  // The shell survives suspend: a minute tick that comes much later than
+  // expected (wall clock) means it slept.
+  Timer {
+    id: wakeWatch
+    property double lastTickMs: Date.now()
+    interval: 60000
+    repeat: true
+    running: true
+    onTriggered: {
+      var now = Date.now()
+      if (Freshness.wokeUp(lastTickMs, now, interval)) wakeCheck.restart()
+      lastTickMs = now
+    }
+  }
+  Timer {
+    id: wakeCheck
+    interval: Freshness.WAKE_DELAY_MS
+    onTriggered: { root.nowMs = Date.now(); root.refreshIfStale() }
   }
 
   // Retry on a source-down banner: the refresh service for that one
