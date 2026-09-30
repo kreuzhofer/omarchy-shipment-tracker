@@ -39,9 +39,12 @@ const USAGE = `usage: shipment-tracker <command>
   disconnect mail        log out of Microsoft 365 mail and drop the Orders only mail knew
   refresh [--source <key>]
                          one refresh run (all Connections, or one)
+  refresh --source dhl --if-close
+                         the same for DHL, but only while a DHL Shipment is out
+                         for delivery or due today (the 15-min timer runs it)
   clear-stale-logins     end Logins whose process is gone as failed (the plugin runs it on load)
-  install                install the hourly refresh timer (idempotent)
-  uninstall              remove the refresh timer and service`;
+  install                install the hourly and the 15-min refresh timers (idempotent)
+  uninstall              remove the refresh timers and services`;
 
 export async function main(argv, deps) {
   const [command, ...args] = argv;
@@ -63,12 +66,13 @@ export async function main(argv, deps) {
     case "disconnect":
       return disconnect(args, run);
     case "refresh": {
-      const source = refreshSource(args);
-      if (source === undefined) {
-        deps.log("usage: shipment-tracker refresh [--source <key>]");
+      const ifClose = args.at(-1) === "--if-close";
+      const source = refreshSource(ifClose ? args.slice(0, -1) : args);
+      if (source === undefined || (ifClose && source !== "dhl")) {
+        deps.log("usage: shipment-tracker refresh [--source <key>] | refresh --source dhl --if-close");
         return 2;
       }
-      return refresh({ ...run, source });
+      return refresh({ ...run, source, ifClose });
     }
     case "clear-stale-logins":
       return clearStale(run);

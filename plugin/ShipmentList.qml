@@ -11,7 +11,10 @@
 // tile (#58, option A of #54): the item's image, cached by the CLI, or a
 // package glyph until there is one; so do DHL cards whose item a mail named.
 // An Order only mail knows shows "from mail" in its badge and the last mail's
-// hint instead of a Status, over an empty bar (#59). Footer: the manual-add field.
+// hint instead of a Status, over an empty bar (#59). An Out for delivery card
+// with DHL's live tour data (#80, variant B) fills step 4 of the bar with the
+// share of the tour driven, shows a stops chip next to the Status, and the
+// estimated arrival instead of the Estimate. Footer: the manual-add field.
 // A manual add offers removal on hover, every card dismissal (#35): the card
 // slides out and the cards below close the gap; "N dismissed · show" under
 // the list brings Dismissed cards back into view, dimmed, with "Show again".
@@ -308,6 +311,8 @@ Column {
       // named (#59); without an image the tile shows the package glyph.
       readonly property bool tiled: s.source === "Amazon" || !!s.itemTitle
       readonly property int tileSize: root.cardHeight - Style.space(16)
+      readonly property var live: Shipments.liveOf(s)
+      readonly property real driven: Shipments.tourDriven(live)
       width: list.width
       height: root.cardHeight
       radius: Style.cornerRadius
@@ -424,7 +429,7 @@ Column {
         Item {
           id: bar
           width: parent.width
-          height: Style.space(4)
+          height: card.live ? Style.space(6) : Style.space(4)
           readonly property real gap: Style.space(3)
           readonly property real segment: (width - (Shipments.STEPS - 1) * gap) / Shipments.STEPS
           Row {
@@ -437,7 +442,15 @@ Column {
                 width: bar.segment
                 height: bar.height
                 radius: height / 2
-                color: Shipments.stepFilled(card.progress, index) ? card.tone : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.15)
+                // Step 4 of a live card fills with the tour driven so far.
+                readonly property bool tourStep: index === 3 && card.driven >= 0
+                color: !tourStep && Shipments.stepFilled(card.progress, index) ? card.tone : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.15)
+                Rectangle {
+                  visible: parent.tourStep
+                  height: parent.height; radius: parent.radius
+                  width: Math.max(height, parent.width * card.driven)
+                  color: Color.accent
+                }
               }
             }
           }
@@ -480,6 +493,21 @@ Column {
               radius: Style.cornerRadius
               color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.25)
               Text { id: delayText; anchors.centerIn: parent; text: "Delayed"; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption }
+            }
+            // How many stops before this one, from DHL's live tour data.
+            Rectangle {
+              visible: chipText.text !== ""
+              anchors.verticalCenter: parent.verticalCenter
+              width: chipText.implicitWidth + Style.space(10)
+              height: chipText.implicitHeight + Style.space(2)
+              radius: height / 2
+              color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.3)
+              Text {
+                id: chipText
+                anchors.centerIn: parent
+                text: Shipments.stopsChip(card.live)
+                color: root.fg; font.family: root.ff; font.pixelSize: Style.font.caption; font.bold: true
+              }
             }
           }
           Text {

@@ -160,9 +160,7 @@ Item {
   // and collapsed (spec #21); the plugin only gates them on the toggle and the
   // last handled id (see Notify.js).
   function handleEvents(state) {
-    var fresh = Notify.claim(state)
-    if (!root.notificationsOn) return
-    fresh.forEach(function(e) { Quickshell.execDetached(Notify.command(e, root.omarchyBin)) })
+    Notify.pending(state, root.notificationsOn).forEach(function(e) { Quickshell.execDetached(Notify.command(e, root.omarchyBin)) })
   }
 
   function reloadFiles() {

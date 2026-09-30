@@ -56,7 +56,7 @@ export function absorbDhlTwin(list, amazon) {
   const detailed = dhl.status !== "Unknown" && Boolean(dhl.lastSeenAt);
   if (detailed) {
     takeOver(amazon);
-    for (const field of ["status", "estimate", "delayed", "lastWindowTo", "terminalAt", "changedAt", "direction", "trackingEvent"]) {
+    for (const field of ["status", "estimate", "delayed", "lastWindowTo", "terminalAt", "changedAt", "direction", "trackingEvent", "live"]) {
       if (dhl[field] === undefined) delete amazon[field];
       else amazon[field] = dhl[field];
     }
@@ -70,6 +70,8 @@ export function absorbDhlTwin(list, amazon) {
     amazon.dismissedAt = dhl.dismissedAt;
     amazon.dismissedAs = dhl.dismissedAs;
   }
+  // Nor is its "almost there" notification sent twice (see events.mjs).
+  if (dhl.almostNotified) amazon.almostNotified = true;
   return true;
 }
 

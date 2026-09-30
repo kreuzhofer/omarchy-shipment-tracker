@@ -132,10 +132,13 @@ function estimateText(s, nowMs) {
 
 // The card's right-hand line. Finished cards: the delivery day only (an
 // Order only mail knows has it in its hint), no "… ago", since the day is
-// what matters. Others: the Estimate and how long since the last change.
+// what matters. Out for delivery with an estimated arrival (#80): that, then
+// the age. Others: the Estimate and how long since the last change.
 function dateLine(s, nowMs) {
   if (mailDelivered(s)) return ""
   if (terminal[s.status]) return terminalText(s)
+  var eta = etaText(liveOf(s))
+  if (eta) return [eta, age(s.changedAt, nowMs)].filter(function(t) { return t !== "" }).join("  ·  ")
   return [estimateText(s, nowMs), age(s.changedAt, nowMs)].filter(function(t) { return t !== "" }).join("  ·  ")
 }
 
@@ -188,6 +191,38 @@ function hintText(s) {
 function statusLine(s) {
   if (fromMail(s)) return "\u{F01F0}  " + hintText(s) // email-outline
   return statusGlyph(s.status) + "  " + s.status
+}
+
+// ---- DHL's live tour data (#80, variant B): on an Out for delivery card, a
+// stops chip next to the Status, step 4 of the bar filling with the share of
+// the tour driven, and the estimated arrival on the right. The CLI keeps
+// `live` only while Out for delivery (plugin/cli/dhl/live.mjs).
+
+function liveOf(s) {
+  return s && s.status === "Out for delivery" && s.live ? s.live : null
+}
+
+// "3 stops", "~10 stops", "20+ stops", "Next stop"; "" without a count.
+function stopsChip(l) {
+  if (!l) return ""
+  if (typeof l.stops === "number" && l.stops > 0) return l.stops === 1 ? "Next stop" : l.stops + " stops"
+  if (l.bucket === "next") return "Next stop"
+  return l.bucket ? l.bucket + " stops" : ""
+}
+
+// The share of the tour already driven (0–1), or -1 when DHL gave none.
+function tourDriven(l) {
+  if (!l || typeof l.remaining !== "number") return -1
+  return Math.max(0, Math.min(1, 1 - l.remaining))
+}
+
+// "≈ 13:20 est." (local time), or "".
+function etaText(l) {
+  if (!l || !l.eta) return ""
+  var d = new Date(l.eta)
+  if (isNaN(d.getTime())) return ""
+  function pad(n) { return (n < 10 ? "0" : "") + n }
+  return "\u2248 " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + " est."
 }
 
 // ---- Direction tabs and progress cards (#52, variant C of #9)

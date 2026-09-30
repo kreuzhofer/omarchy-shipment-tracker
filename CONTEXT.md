@@ -81,6 +81,10 @@ _Avoid_: Fulfilled, completed, done
 The Carrier's or Amazon's current promise of when the Shipment will be delivered, as a day or a time window.
 _Avoid_: ETA, delivery date
 
+**Live tour**:
+DHL's live data for a Shipment Out for delivery: how many stops before the user's ("3 stops", "~10 stops", "Next stop") and how much of the tour is left. From it the tracker computes an **estimated arrival** ("≈ 13:20 est."), its own guess, never the Carrier's promise. Not an update: it changes no Status or Estimate and notifies only once, when the Shipment is 10 stops away or fewer ("almost there").
+_Avoid_: Countdown, ETA (in UI copy)
+
 **Delayed**:
 A Shipment whose Estimate moved later than the one previously seen. A flag on the Shipment, not a Status.
 

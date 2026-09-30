@@ -33,9 +33,17 @@
 // back, runs the Sources once more. Nothing is locked while it waits, and
 // the header reads "Offline" meanwhile. A `--source` run (Retry, a Login's
 // first sync) fails fast.
+//
+// Close to a delivery (#80): a second timer runs `refresh --source dhl
+// --if-close` every 15 min. It returns at once, without a request, unless a
+// DHL Shipment is Out for delivery or due today (see dhl/live.mjs), or while
+// another run is in flight (that one reads DHL already). Otherwise it is an
+// ordinary `--source dhl` run: the same state lock, the same token renewal
+// under the token lock, the same events.
 import { refreshAmazon } from "./amazon/connection.mjs";
 import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
+import { deliveryClose } from "./dhl/live.mjs";
 import { lookupAnonymous } from "./dhl/search.mjs";
 import { readDhlElement } from "./dhl/status.mjs";
 import { KEY as MAIL, refreshMail } from "./mail/connection.mjs";
@@ -52,6 +60,8 @@ import { TERMINAL } from "./shipments.mjs";
 import { readState, updateState } from "./state.mjs";
 
 const MAX_ROUNDS = 3;
+// As the plugin's Store: a run that died without clearing `refreshing` stops counting.
+const RUN_IN_FLIGHT_MS = 15 * 60_000;
 
 // Manual DHL adds, DHL numbers found in mail and DHL numbers learned from
 // Amazon are looked up anonymously, one request per number per run. Terminal
@@ -62,6 +72,7 @@ const needsLookup = (s) => !TERMINAL.has(s.status)
 // `firstSync`: this run is the first sync of the `source` Connection after a
 // Login, so what it discovers is not announced as new.
 export async function refresh(run) {
+  if (run.ifClose && !(await closeToDelivery(run))) return 0;
   const offline = await refreshOnce(run);
   if (!offline || (run.source ?? null) !== null || run.firstSync) return 0;
   run.log("refresh: offline, waiting for the network");
@@ -72,6 +83,22 @@ export async function refresh(run) {
   run.log("refresh: network is back, running again");
   await refreshOnce(run);
   return 0;
+}
+
+// `--if-close`: whether this run has anything to do. No network.
+async function closeToDelivery({ stateDir, now, timeZone, log }) {
+  if (!(await hasTokens(stateDir))) return false;
+  const { shipments, sources } = await readState(stateDir);
+  const started = Date.parse(sources.refreshing?.startedAt ?? "");
+  if (started && now().getTime() - started < RUN_IN_FLIGHT_MS) {
+    log("refresh: another run is reading DHL, skipped");
+    return false;
+  }
+  if (!deliveryClose(shipments.shipments, now(), timeZone)) {
+    log("refresh: no DHL delivery close, skipped");
+    return false;
+  }
+  return true;
 }
 
 // One pass over the Sources. Returns whether it was offline.
@@ -117,7 +144,7 @@ async function refreshOnce({ stateDir, env, now, transport, chrome, mcp, sleep, 
       // Disconnected while the sync was in flight: nothing of it counts.
       if (!(await hasTokens(stateDir))) return new Set();
       const at = now();
-      const keys = applyDhlSync(state, outcome, at);
+      const keys = applyDhlSync(state, outcome, at, timeZone);
       finishRun(state.sources, at);
       return keys;
     });
@@ -191,7 +218,7 @@ async function refreshOnce({ stateDir, env, now, transport, chrome, mcp, sleep, 
     // Notifications ignore dismissals; an update notifies and brings the row
     // back. A Shipment retention dropped is gone, dismissal and all.
     clearUpdatedDismissals(state.shipments);
-    const told = recordEvents(state.shipments, { firstSync: quiet }) + recordConnectionEvents(state.shipments, state.sources);
+    const told = recordEvents(state.shipments, { firstSync: quiet, almost: { now: now(), timeZone } }) + recordConnectionEvents(state.shipments, state.sources);
     return { told, dropped };
   });
   // Whether each login profile has a password manager yet (see login-hint.mjs).

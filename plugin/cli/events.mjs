@@ -115,6 +115,43 @@ function estimateLine(s) {
   return day ? `${s.status} ${dayLabel(day)}` : null;
 }
 
+// "Almost there" (#80): once per Incoming Shipment, when DHL's live tour data
+// (dhl/live.mjs) puts it 10 stops away or fewer: the exact count, or a stop
+// code of about 10 or lower. With an estimated arrival the title and body say
+// when, else how many stops. `almostNotified` marks it on the Shipment, so
+// overlapping runs and later tours never send it again. Nothing else about
+// `live` notifies.
+const ALMOST_STOPS = 10;
+
+function stopsLeft(live) {
+  if (Number.isInteger(live?.stops)) return live.stops;
+  const bucket = live?.bucket;
+  if (bucket === "next") return 1;
+  const n = typeof bucket === "string" ? Number(bucket.replace(/^~/, "")) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+const almostClose = (s) => s.direction !== "Outgoing" && s.status === "Out for delivery"
+  && s.almostNotified !== true && stopsLeft(s.live) !== null && stopsLeft(s.live) <= ALMOST_STOPS;
+
+const clockIn = (iso, timeZone) =>
+  new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
+
+function stopsPhrase(live) {
+  if (live.stops === 1 || (live.stops === null && live.bucket === "next")) return "is the next stop";
+  if (Number.isInteger(live.stops)) return `is ${live.stops} stops away`;
+  return live.bucket.startsWith("~") ? `is about ${live.bucket.slice(1)} stops away` : `is ${live.bucket} stops away`;
+}
+
+function almostEvent(s, { now, timeZone }) {
+  const i = item(s);
+  if (s.live.eta) {
+    const minutes = Math.max(1, Math.round((Date.parse(s.live.eta) - now.getTime()) / 60_000));
+    return shipmentEvent(s, "almost", `Arriving soon: ${i}`, `Your ${i} arrives in ~${minutes} min (around ${clockIn(s.live.eta, timeZone)})`);
+  }
+  return shipmentEvent(s, "almost", `Almost there: ${i}`, `Your ${i} ${stopsPhrase(s.live)}`);
+}
+
 const EVENTS = {
   status: (s) => shipmentEvent(s, "status", (STATUS_TITLES[s.status] ?? ((i) => `Your ${i}: ${s.status}`))(item(s)),
     line(sourceLabel(s), estimateLine(s))),
@@ -152,14 +189,20 @@ function summary(events, shipments) {
 
 // Replaces events[] with this run's notifications and moves every read
 // Shipment's mark. `firstSync`: Connection keys whose discoveries are not new.
+// `almost` ({ now, timeZone }, refresh runs only) lets it send "almost there";
+// a Shipment's other event this run goes first, "almost there" waits a run.
 // Call at the end of a run, under the state lock. Returns the event count.
-export function recordEvents(shipments, { firstSync = new Set() } = {}) {
+export function recordEvents(shipments, { firstSync = new Set(), almost = null } = {}) {
   const dropped = new Set((shipments.dropped ?? []).map((d) => d.key));
   const found = [];
   for (const s of shipments.shipments) {
     if (!s.lastSeenAt) continue; // never read: nothing to tell yet
     const kind = dropped.has(s.key) ? null : eventKind(s, firstSync);
     if (kind) found.push(EVENTS[kind](s));
+    else if (almost && s.notified && !dropped.has(s.key) && almostClose(s)) {
+      found.push(almostEvent(s, almost));
+      s.almostNotified = true;
+    }
     s.notified = mark(s);
   }
   const events = found.length > COLLAPSE_ABOVE ? [summary(found, shipments.shipments)] : found;
