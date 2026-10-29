@@ -5,6 +5,7 @@
 // stops the run at once; nothing is ever submitted or clicked.
 import { classifyPage, HISTORY_URL, inferCarrier, isEmptyOrderSearch, orderSearchUrl, parseHistory, parseTracker, renderState } from "./pages.mjs";
 import { amazonStatus, parseEstimate } from "./status.mjs";
+import { isTrackingNumber } from "../carriers.mjs";
 import { isDropped } from "../retention.mjs";
 import { TERMINAL } from "../shipments.mjs";
 
@@ -167,7 +168,8 @@ export const shipmentKey = ({ orderId, packageIndex }) => `amazon:${orderId}#${p
 function trackerReading(target, { state, carrierText }, now, timeZone) {
   const orderId = state.orderId;
   const packageIndex = String(state.packageIndex ?? target.packageIndex);
-  const trackingNumber = state.trackingId || null;
+  // Not `<orderId>-InvalidId`, Amazon's placeholder for an untracked parcel.
+  const trackingNumber = isTrackingNumber(state.trackingId) ? state.trackingId : null;
   const { status, mapped } = amazonStatus(state);
   const estimate = parseEstimate(state.promise?.promiseMessage, now, timeZone);
   return {

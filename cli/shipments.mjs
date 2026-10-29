@@ -1,10 +1,9 @@
 // Shipment records in shipments.json. Terms follow CONTEXT.md.
-import { carrierKey, carrierOfNumber, trackingPageUrl } from "./carriers.mjs";
+import { carrierKey, carrierOfNumber, isTrackingNumber, trackingPageUrl } from "./carriers.mjs";
 import { endsLater } from "./estimate.mjs";
 
 export const TERMINAL = new Set(["Delivered", "Returned"]);
 const AMAZON_ORDER_ID = /^\d{3}-\d{7}-\d{7}$/;
-const TRACKING_NUMBER = /^[A-Z0-9]{8,40}$/;
 
 // What the user typed into the add field → { kind, id } or { error }.
 export function parseManualId(input) {
@@ -14,7 +13,7 @@ export function parseManualId(input) {
   // is the key's prefix.
   if (AMAZON_ORDER_ID.test(raw)) return { kind: "amazon", id: raw };
   const id = raw.replace(/\s+/g, "").toUpperCase();
-  if (!TRACKING_NUMBER.test(id)) return { error: "That doesn't look like a tracking number." };
+  if (!isTrackingNumber(id)) return { error: "That doesn't look like a tracking number." };
   const carrier = carrierOfNumber(id);
   return { kind: carrierKey(carrier, id).split(":")[0], carrier, id };
 }

@@ -9,6 +9,7 @@
 // (neither success nor failure), a Login or a remove waits up to 90 s for it
 // (one account's run takes about 40 s).
 import { mkdir, rm, stat } from "node:fs/promises";
+import { isTrackingNumber } from "../carriers.mjs";
 import { forgetConnection } from "../disconnect.mjs";
 import { clearUpdatedDismissals } from "../dismiss.mjs";
 import { markKnown, recordEvents } from "../events.mjs";
@@ -244,6 +245,8 @@ function upsert(list, reading, conn, key, now) {
   if (!s.connections.includes(key)) s.connections.push(key);
   if (reading.carrier) s.carrier = reading.carrier;
   if (reading.trackingNumber) s.trackingNumber = reading.trackingNumber;
+  // A placeholder an earlier version stored (#91) goes.
+  else if (s.trackingNumber !== undefined && !isTrackingNumber(s.trackingNumber)) delete s.trackingNumber;
   // One Shipment per parcel: a DHL Shipment with this tracking number joins it.
   absorbDhlTwin(list, s);
   applyAmazonReading(s, reading, now);
