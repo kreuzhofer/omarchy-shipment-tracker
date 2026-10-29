@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { fakeChrome, fakeDhl, fixture, holdLock, makeWorld } from "./harness.mjs";
-import { businessHistoryPage, businessSearchNoResultsPage, historyPage, searchNoResultsPage, trackerPage, unknownSearchPage } from "./fixtures/amazon/pages.mjs";
+import { businessHistoryPage, businessSearchNoResultsPage, historyPage, hzsearchResultsPage, searchNoResultsPage, trackerPage, unknownSearchPage } from "./fixtures/amazon/pages.mjs";
 
 const ORDER_PAGE = "https://www.amazon.de/your-orders/order-details?orderID=";
 const P_ORDER = "401-1111111-1111111";
@@ -556,4 +556,60 @@ test("a page at the order search's URL that isn't the history and has Orders on 
 
   assert.deepEqual((await world.shipment(`amazon:${MANUAL}`)).probedBy, []);
   assert.equal(await health(world, "Personal"), "ok");
+});
+
+// ---- Order search results in the newer hzsearch layout (#84)
+
+test("an order search answered in the hzsearch layout that finds the Order means 'owned', with nothing left unreadable", async (t) => {
+  const routes = accountsRoutes();
+  routes.accounts.Personal.search = { [MANUAL]: hzsearchResultsPage(MANUAL, [{ orderId: MANUAL, title: "Dockingstation" }]) };
+  const world = await world2(t, routes);
+  await connect(world, "Personal");
+  await world.run("add", MANUAL);
+
+  assert.equal(await world.run("refresh"), 0);
+
+  assert.equal(await health(world, "Personal"), "ok");
+  const s = await world.shipment(`amazon:${MANUAL}`);
+  assert.equal(s.account, "Personal");
+  assert.ok(s.connections.includes("amazon:Personal"), s.connections.join());
+  assert.equal(s.linkOnly, false);
+  assert.deepEqual(s.probedBy, []);
+  assert.ok(!world.logs.some((l) => /not readable|stopped/.test(l)), world.logs.join("\n"));
+});
+
+test("an hzsearch result with a tracker link is read as the Order's Shipment, with its title and image", async (t) => {
+  const routes = accountsRoutes();
+  routes.accounts.Personal.search = {
+    [MANUAL]: hzsearchResultsPage(MANUAL, [{
+      orderId: MANUAL, title: "Dockingstation", image: "https://m.media-amazon.com/images/I/55HzSearchAa._SS80_.jpg",
+      tracker: { packageIndex: 0, shipmentId: "Thzsearch" },
+    }]),
+  };
+  Object.assign(routes.accounts.Personal.trackers, tracker(MANUAL));
+  const world = await world2(t, routes);
+  await connect(world, "Personal");
+  await world.run("add", MANUAL);
+
+  assert.equal(await world.run("refresh"), 0);
+
+  assert.equal(await world.shipment(`amazon:${MANUAL}`), undefined);
+  const s = await world.shipment(`amazon:${MANUAL}#0`);
+  assert.deepEqual([s.status, s.account, s.title], ["In transit", "Personal", "Dockingstation"]);
+  assert.equal(s.imageUrl, "https://m.media-amazon.com/images/I/55HzSearchAa._SS142_.jpg");
+  assert.ok(s.connections.includes("manual"));
+});
+
+test("an hzsearch page without results means 'not owned'", async (t) => {
+  const routes = accountsRoutes();
+  routes.accounts.Personal.search = { [MANUAL]: hzsearchResultsPage(MANUAL, []) };
+  const world = await world2(t, routes);
+  await connect(world, "Personal");
+  await world.run("add", MANUAL);
+
+  assert.equal(await world.run("refresh"), 0);
+
+  assert.equal(await health(world, "Personal"), "ok");
+  assert.deepEqual((await world.shipment(`amazon:${MANUAL}`)).probedBy, ["amazon:Personal"]);
+  assert.ok(!world.logs.some((l) => /not readable|stopped/.test(l)), world.logs.join("\n"));
 });
