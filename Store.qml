@@ -444,7 +444,7 @@ Item {
   property var nodeOk: null
   property bool nodeInstalling: false
   function checkNode() { if (!nodeCheck.running) nodeCheck.running = true }
-  // `omarchy pkg add` asks for sudo, so it runs in Omarchy's floating terminal.
+  // `omarchy pkg add` asks for the user's password, so it runs in Omarchy's floating terminal.
   function installNode() {
     root.nodeInstalling = true
     Quickshell.execDetached([root.omarchyBin + "omarchy-launch-floating-terminal-with-presentation", "omarchy pkg add nodejs npm"])

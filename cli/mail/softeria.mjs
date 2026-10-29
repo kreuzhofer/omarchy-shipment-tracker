@@ -1,5 +1,5 @@
 // The real MCP transport for Microsoft 365 mail: the pinned Softeria
-// ms-365-mcp-server, installed into the plugin's own folder (plugin/mail-server,
+// ms-365-mcp-server, installed into the plugin's own folder (mail-server/,
 // exact version and lockfile, `npm ci`) the first time it's needed, never
 // `npx` latest, and spawned over stdio. Newline-delimited JSON-RPC 2.0.
 // Tests replace this with recorded MCP responses (see mail/mcp.mjs).

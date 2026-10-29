@@ -1,5 +1,5 @@
 // The popup's presentation of finished Shipments (#76). The plugin has no
-// test seam of its own: this loads plugin/Shipments.js as the QML engine does
+// test seam of its own: this loads Shipments.js as the QML engine does
 // (a plain script once `.pragma library` is gone) and checks its pure
 // functions on synthetic rows from every Source.
 process.env.TZ = "Europe/Berlin";
@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-const source = readFileSync(new URL("../plugin/Shipments.js", import.meta.url), "utf8").replace(".pragma library", "");
+const source = readFileSync(new URL("../Shipments.js", import.meta.url), "utf8").replace(".pragma library", "");
 const S = vm.runInNewContext(`${source}\n;({ byUrgency, dateLine, statusLine, inWindow, pendingCount, settled, terminalDay })`, {});
 
 const NOW = Date.parse("2026-09-29T10:00:00Z");

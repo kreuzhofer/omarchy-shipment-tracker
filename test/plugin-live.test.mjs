@@ -1,5 +1,5 @@
 // The popup's live tour data (#80, variant B) and the notification toggle.
-// Loads plugin/Shipments.js and plugin/Notify.js as the QML engine does
+// Loads Shipments.js and Notify.js as the QML engine does
 // (plain scripts once `.pragma library` / `.import` are gone) and checks their
 // pure functions on synthetic rows.
 process.env.TZ = "Europe/Berlin";
@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-const read = (name) => readFileSync(new URL(`../plugin/${name}`, import.meta.url), "utf8")
+const read = (name) => readFileSync(new URL(`../${name}`, import.meta.url), "utf8")
   .replace(".pragma library", "").replace(/^\.import .*$/m, "");
 const S = vm.runInNewContext(`${read("Shipments.js")}\n;({ liveOf, stopsChip, tourDriven, etaText, dateLine, statusGlyph })`, {});
 const N = vm.runInNewContext(`${read("Notify.js")}\n;({ pending, command })`, { Shipments: S });

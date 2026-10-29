@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { main } from "../plugin/cli/main.mjs";
+import { main } from "../cli/main.mjs";
 
 const FIXTURES = new URL("./fixtures/", import.meta.url);
 

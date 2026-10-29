@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { fakeBrowser, fakeChrome, fakeDhl, fakeDhlAccount, fixture, installExtension, makeWorld } from "./harness.mjs";
 import { historyPage, trackerPage } from "./fixtures/amazon/pages.mjs";
 
-const HINT_PAGE = fileURLToPath(new URL("../plugin/cli/login-hint.html", import.meta.url));
+const HINT_PAGE = fileURLToPath(new URL("../cli/login-hint.html", import.meta.url));
 const HINT_URL = pathToFileURL(HINT_PAGE).href;
 const HINT_TAB = { url: HINT_URL, background: true };
 // Chrome puts these into every new profile by itself; they are not the user's.
