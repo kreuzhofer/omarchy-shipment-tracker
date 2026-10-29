@@ -77,11 +77,21 @@ export function classifyPage(url, html) {
 // `srcset` entry that is a product image on Amazon's CDN: a lazy-loaded image
 // has a placeholder in `src` (see images.mjs).
 //
+// An order search may come back in a third layout, the "hzsearch" results
+// page (#84): `.hzsearch-content-container` with one `.a-fixed-left-grid`
+// per result (item image, order-details link, the item's `/dp/…` link and
+// buttons). There a result is the box. A delivered Order's result had no
+// tracker link, so such a result only tells which Orders the account owns.
+// `a-fixed-left-grid` is also on the personal history (not as a box), so it
+// counts as one only on this page.
+//
 // `stats` is for the refresh's diagnostic line and holds no IDs or URLs:
 // boxes found, boxes with an image URL, and how many image URLs in the boxes
 // point at each host.
-const HISTORY_PAGE = [/your-orders-content-container/, /id="yourOrderHistorySection"/];
+const HZSEARCH_PAGE = /class="(?:[^"]*\s)?hzsearch-content-container[\s"]/;
+const HISTORY_PAGE = [/your-orders-content-container/, /id="yourOrderHistorySection"/, HZSEARCH_PAGE];
 const DELIVERY_BOX = /class="a-box delivery-box|id="orderCardDeliveryBox"/g;
+const HZSEARCH_RESULT = /class="a-fixed-left-grid"/g;
 const TRACKER_LINK = /href="([^"]*\/progress-tracker\/package[^"]*)"/;
 const IMG_TAG = /<img\b[^>]*>/g;
 const ITEM_IMAGE_CLASS = /\sclass="(?:[^"]*\s)?itemImageSource[\s"]/;
@@ -96,7 +106,8 @@ export function parseHistory(html) {
   const shipments = [];
   const seen = new Set();
   const stats = { boxes: 0, withImage: 0, hosts: {} };
-  const starts = [...html.matchAll(DELIVERY_BOX)].map((m) => html.lastIndexOf("<", m.index));
+  const boxes = HZSEARCH_PAGE.test(html) ? HZSEARCH_RESULT : DELIVERY_BOX;
+  const starts = [...html.matchAll(boxes)].map((m) => html.lastIndexOf("<", m.index));
   starts.forEach((start, i) => {
     stats.boxes++;
     const chunk = html.slice(start, starts[i + 1] ?? html.length);

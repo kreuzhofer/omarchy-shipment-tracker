@@ -159,6 +159,40 @@ export function businessSearchNoResultsPage(query) {
 </body></html>`;
 }
 
+// An order search answered in the newer "hzsearch" layout (#84), in the
+// shape of a scrubbed live page: not the history's markup at all. The page
+// has `.hzsearch-content-container` with breadcrumbs, a "Suchergebnisse"
+// heading and its own search form (`action="/your-orders/search"`), a
+// `.hzsearch-results-summary` line, then one `.a-fixed-left-grid` per
+// result: the item image (in no `.product-image`), the order-details link,
+// the item's `/dp/…` link and buttons. A delivered Order had no tracker
+// link; a result's `tracker` ({ packageIndex, shipmentId }) adds a
+// "Lieferung verfolgen" button, a guess at the live markup.
+// `results`: [{ orderId, title, image, tracker }].
+function hzsearchResult({ orderId, title, image = DEFAULT_IMAGE, tracker }, i) {
+  const n = i + 1;
+  const trackerButton = tracker ? `<span class="a-button a-button-base"><span class="a-button-inner"><a href="/progress-tracker/package?orderId=${orderId}&amp;_encoding=UTF8&amp;shipmentId=${tracker.shipmentId}&amp;packageIndex=${tracker.packageIndex}&amp;ref_=ppx_hzsearch_conn_dt_b_track_package_${n}" class="a-button-text">Lieferung verfolgen</a></span></span>` : "";
+  return `<div class="a-section a-spacing-large a-spacing-top-large"><div class="a-fixed-left-grid"><div class="a-fixed-left-grid-inner" style="padding-left:100px">
+<div class="a-text-center a-fixed-left-grid-col a-col-left" style="width:100px;margin-left:-100px;float:left;"><div style="position: relative"><a class="a-link-normal" href="/dp/B000000000?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_${n}"><img alt="${esc(title)}" src="${esc(image)}" height="90" width="90" title="${esc(title)}" data-a-hires="${esc(String(image).replace(/\._[^/]*_\.jpg$/, "._SS160_.jpg"))}"></a></div></div>
+<div class="a-fixed-left-grid-col a-col-right" style="padding-left:1.5%;float:left;">
+<div class="a-row a-spacing-small"><a class="a-link-normal" title="Bestelldetails anzeigen" href="/your-orders/order-details?orderID=${orderId}&amp;ref_=ppx_hzsearch_conn_dt_b_fed_order_details_${n}"><span>Bestelldetails anzeigen</span></a><i class="a-icon a-icon-text-separator" role="presentation"></i><span>Bestellt am 30. August 2026</span></div>
+<div class="a-row a-spacing-small"><div class="a-section a-spacing-none"><a class="a-link-normal" title="${esc(title)}" href="/dp/B000000000?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_${n}"><p>${esc(title)}</p></a></div></div>
+<div class="a-row"><div class="a-section a-spacing-none"><span class="a-button a-button-primary"><span class="a-button-inner"><a href="/gp/buyagain?ats=example&amp;ref_=ppx_hzsearch_conn_dt_b_bia_item_f_${n}" class="a-button-text">Nochmals kaufen</a></span></span><span class="a-button a-button-base"><span class="a-button-inner"><a href="/your-orders/pop?orderId=${orderId}&amp;lineItemId=example&amp;shipmentId=${tracker?.shipmentId ?? "Tzzzzzzzz"}&amp;packageId=1&amp;asin=B000000000&amp;ref_=ppx_hzsearch_conn_dt_b_fed_pop_${n}" class="a-button-text">Deinen Artikel anzeigen</a></span></span>${trackerButton}</div></div>
+</div></div></div></div>`;
+}
+
+export function hzsearchResultsPage(query, results = []) {
+  const summary = results.length === 1 ? "1 Bestellung, die" : `${results.length} Bestellungen, die`;
+  return `${head("Meine Bestellungen")}<body>${NAV}
+<div class="a-section a-spacing-large hzsearch-content-container" role="main">
+<div class="a-section a-spacing-medium a-spacing-top-small"><ul class="a-unordered-list a-horizontal hzsearch-breadcrumbs"><li class="hzsearch-breadcrumbs__crumb"><span class="a-list-item"><a class="a-link-normal" title="Mein Konto" href="/gp/css/homepage.html?ref_=ppx_hzsearch_bc_dt_b_ya">Mein Konto</a></span></li><li class="hzsearch-breadcrumbs__crumb"><span class="a-list-item"><a class="a-link-normal" title="Meine Bestellungen" href="/gp/your-account/order-history?ref_=ppx_hzsearch_bc_dt_b_yo">Meine Bestellungen</a></span></li><li class="hzsearch-breadcrumbs__crumb hzsearch-breadcrumbs__crumb--current"><span class="a-list-item"><span class="a-color-state">Suchergebnisse</span></span></li></ul></div>
+<div class="a-row a-spacing-mini"><div class="a-column a-span6"><div class="a-section a-spacing-none"><h1>Suchergebnisse</h1></div></div>
+<div class="a-column a-span6 a-span-last"><div class="search-bar"><form method="get" action="/your-orders/search"><div class="a-search a-span12 a-spacing-none"><input type="search" value="${esc(query)}" placeholder="Alle Bestellungen durchsuchen" name="search" class="a-input-text a-span12 hzsearch-text-input" aria-label="Alle Bestellungen durchsuchen"></div><input type="hidden" name="ref_" value="ppx_hzsearch_sb_dt_b"></form></div></div></div>
+<div class="a-section a-spacing-small"><p data-searchterm="${esc(query)}" aria-level="2" class="hzsearch-results-summary" role="heading">${summary} mit „<strong>${esc(query)}</strong>“ übereinstimm${results.length === 1 ? "t" : "en"}</p></div>
+<div class="a-section a-spacing-none a-padding-small">${results.map(hzsearchResult).join("")}</div>
+</div>${RECOMMENDATIONS}</body></html>`;
+}
+
 // A page at the order search's URL that is neither the history's markup nor
 // a recognisable empty search: a layout nobody knows yet.
 export const unknownSearchPage = () => `${head("Amazon.de")}<body>${NAV}<div id="a-page"><div class="new-orders-app" data-app="orders"></div></div></body></html>`;
