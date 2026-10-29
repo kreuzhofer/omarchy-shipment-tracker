@@ -117,6 +117,39 @@ export const shopShipped = ({ trackingNumber, item, at, schemaNumber = trackingN
   })}</script></head><body><p>Deine Bestellung EX-1001 ist mit DHL unterwegs. Sendungsnummer ${trackingNumber}.</p></body></html>`,
 });
 
+// ---- DPD (#83). Layouts are synthetic, after the wording seen live: DPD's
+// own Predict mails come from noreply@service.dpd.de, print the number under
+// "Versender & Paketnummer:" next to the shop, and link it wrapped as
+// `parcelno=<prefix><14 digits><YYYYMMDD>`.
+
+const dpdLink = (prefix, trackingNumber, at) => `https://my.dpd.de/redirect.aspx?action=2&parcelno=${prefix}${trackingNumber}${at.slice(0, 10).replaceAll("-", "")}`;
+
+// "Zwischen 13:31 und 15:31 Uhr kommt Ihr DPD Paket": the day's window.
+export const dpdPredict = ({ trackingNumber, at, from = "13:31", to = "15:31", shop = "Beispiel-Shop", day = "heute" }) => mail({
+  sender: "noreply@service.dpd.de", name: "DPD", receivedDateTime: at,
+  subject: `Zwischen ${from} und ${to} Uhr kommt Ihr DPD Paket`,
+  body: `Guten Tag, Ihr Paket kommt ${day} zwischen ${from} und ${to} Uhr. Versender & Paketnummer: ${shop} ${trackingNumber} `
+    + `Paket verfolgen: ${dpdLink("MPS", trackingNumber, at)} Ihr DPD Team`,
+});
+
+// "Bald ist Ihr DPD Paket da": no window yet, the number only in the link.
+export const dpdSoon = ({ trackingNumber, at }) => mail({
+  sender: "noreply@service.dpd.de", name: "DPD", receivedDateTime: at, subject: "Bald ist Ihr DPD Paket da",
+  body: `Guten Tag, bald ist Ihr Paket da. Sendung verfolgen: ${dpdLink("B2C", trackingNumber, at)}`,
+});
+
+// A shop's shipping confirmation naming a DPD number.
+export const dpdShopShipped = ({ trackingNumber, item, at }) => mail({
+  sender: "versand@shop.example", name: "Beispiel-Shop", receivedDateTime: at, subject: `Versendet: ${item}`,
+  body: `Hallo, deine Bestellung EX-2002 ist mit DPD unterwegs. Paketnummer: ${trackingNumber}.`,
+});
+
+// An amazon.de mail naming a DPD number: left to the Amazon Source.
+export const amazonDpdNotice = ({ trackingNumber, at }) => mail({
+  sender: "shipment-tracking@amazon.de", receivedDateTime: at, subject: "Dein Paket kommt heute mit DPD",
+  body: `Dein Paket kommt heute mit DPD. Trackingnummer ${trackingNumber}`,
+});
+
 // A newsletter that mentions DHL and a long number that isn't a tracking number.
 export const newsletter = ({ at }) => mail({
   sender: "news@shop.example", name: "Beispiel-Shop", receivedDateTime: at, subject: "Versandkostenfrei mit DHL",

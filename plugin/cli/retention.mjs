@@ -11,6 +11,7 @@
 // - `dropped[]` keeps only the key and the drop date, pruned after 120 days.
 //   Discovery ignores these keys (DHL's Sendungsliste lists archived
 //   Shipments for 80+ days), and they never produce events.
+import { carrierKey, isNumberCarrier } from "./carriers.mjs";
 import { TERMINAL } from "./shipments.mjs";
 
 const DAY_MS = 864e5;
@@ -25,10 +26,10 @@ export const isDropped = (dropped, key) => dropped.has(key) || dropped.has(Strin
 
 // Whether a Connection that knows the Shipment would still return it: its
 // last successful read saw it, or it hasn't been read successfully yet. For a
-// manual add or a DHL number found in mail: the Carrier knows the number.
+// manual add or a DHL or DPD number found in mail: the Carrier knows the number.
 function stillReturned(s, sources) {
   return (s.connections ?? []).some((c) => {
-    if (c === "manual" || (c === "mail" && s.source === "DHL")) return s.status !== "Unknown";
+    if (c === "manual" || (c === "mail" && isNumberCarrier(s.source))) return s.status !== "Unknown";
     const conn = sources.connections?.[c];
     if (!conn) return false;
     return !conn.lastOk || (Boolean(s.lastSeenAt) && s.lastSeenAt >= conn.lastOk);
@@ -43,8 +44,8 @@ function expired(s, sources, now) {
 }
 
 // Drops what is due and prunes dropped[] (under the state lock). A merged
-// Amazon Shipment also drops its DHL key, so the Sendungsliste can't bring
-// the parcel back as a DHL Shipment. Returns how many Shipments were dropped.
+// Amazon Shipment also drops its Carrier's key (DHL's, or DPD's), so the
+// Sendungsliste or mail can't bring the parcel back as a Carrier's Shipment. Returns how many Shipments were dropped.
 export function applyRetention({ shipments, sources }, now) {
   const at = now.toISOString();
   const dropped = (shipments.dropped ?? [])
@@ -58,7 +59,8 @@ export function applyRetention({ shipments, sources }, now) {
       continue;
     }
     count++;
-    for (const key of [s.key, s.trackingNumber ? `dhl:${s.trackingNumber}` : null]) {
+    const carrier = s.carrier === "DPD" ? "DPD" : "DHL";
+    for (const key of [s.key, s.trackingNumber ? carrierKey(carrier, s.trackingNumber) : null]) {
       if (key && !known.has(key)) {
         known.add(key);
         dropped.push({ key, at });

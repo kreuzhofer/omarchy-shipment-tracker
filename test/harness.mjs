@@ -44,6 +44,60 @@ export function fakeDhl(routes) {
   };
 }
 
+// my.dpd.de's anonymous lookup behind the same transport (#83), answering as
+// seen live: redirect.aspx starts a session (cookie) and redirects through
+// the data-protection page to myParcel-tracking.aspx, which renders the
+// parcel only with that session's cookie (else it lands on showerror.aspx).
+// `routes` maps a DPD number to the tracking page: an HTML string,
+// `{ status, text }`, `{ network: true }`, or a function returning one of
+// those. Every other request goes to `fallback` (DHL's fake by default).
+// Records each lookup's number in `lookups`. A spoofed user agent fails the
+// test: the tracker uses Node's default one.
+export function fakeDpd(routes = {}, fallback = fakeDhl({})) {
+  const sessions = new Map();
+  const fake = {
+    lookups: [],
+    async fetch(url, options = {}) {
+      const u = new URL(url);
+      if (u.host !== "my.dpd.de") return fallback.fetch(url, options);
+      const headers = options.headers ?? {};
+      if (Object.keys(headers).some((h) => h.toLowerCase() === "user-agent")) {
+        throw Object.assign(new Error("a user agent was set"), { code: "unexpected" });
+      }
+      if (options.redirect !== "manual") throw Object.assign(new Error("DPD's redirects must be followed by hand, for the cookie"), { code: "unexpected" });
+      const cookie = Object.entries(headers).find(([h]) => h.toLowerCase() === "cookie")?.[1] ?? "";
+      const session = sessions.get(cookie.match(/ASP\.NET_SessionId=([^;\s]+)/)?.[1]);
+      const redirect = (location, cookies = []) => ({ status: 302, text: "", location, cookies });
+      switch (u.pathname.toLowerCase()) {
+        case "/redirect.aspx": {
+          const number = u.searchParams.get("parcelno");
+          if (u.searchParams.get("action") !== "12" || !(number in routes)) {
+            throw Object.assign(new Error(`no recorded DPD page for ${number}`), { code: "unexpected" });
+          }
+          fake.lookups.push(number);
+          let r = routes[number];
+          if (typeof r === "function") r = await r();
+          if (r?.network) throw Object.assign(new Error("fake network failure"), { code: "network" });
+          const id = `SYNTHETIC${sessions.size + 1}`;
+          sessions.set(id, { number, page: r });
+          return redirect("myparcels/dataprotection-tracking.aspx?zip=&", [`ASP.NET_SessionId=${id}; path=/; HttpOnly; SameSite=Lax`]);
+        }
+        case "/myparcels/dataprotection-tracking.aspx":
+          return session ? redirect(`myParcel-tracking.aspx?parcelno=${session.number}`) : redirect("/showerror.aspx");
+        case "/myparcels/myparcel-tracking.aspx": {
+          if (!session || session.number !== u.searchParams.get("parcelno")) return redirect("/showerror.aspx");
+          const r = session.page;
+          return typeof r === "string" ? { status: 200, text: r } : { status: r.status ?? 200, text: r.text ?? "" };
+        }
+        case "/showerror.aspx":
+          return { status: 200, text: "<html><body>Leider ist ein Fehler aufgetreten.</body></html>" };
+      }
+      throw Object.assign(new Error(`unexpected request to ${u.host}${u.pathname}`), { code: "unexpected" });
+    },
+  };
+  return fake;
+}
+
 // A 4×4 grey JPEG generated for the tests (ImageMagick, stripped); no real
 // product image is committed.
 export const TINY_JPEG = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/wAALCAAEAAQBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAA//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AV//Z", "base64");

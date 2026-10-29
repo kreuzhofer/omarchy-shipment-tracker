@@ -2,60 +2,69 @@
 // whose tracking number equals a DHL Shipment's is one Shipment: Source Amazon
 // (its key, title, account and Order link), Carrier DHL, and DHL's Status,
 // Estimate and Delayed, since DHL is the more detailed Source. The match key is
-// the tracking number.
+// the tracking number. The same goes for DPD (#83): every Carrier that is
+// looked up by number (carriers.mjs) is merged alike.
 //
-// `detail: "DHL"` marks an Amazon Shipment whose Status and Estimate now come
-// from DHL; Amazon readings then only refresh its title. A DHL answer without
-// tracking information (Unknown) doesn't take over: Amazon's own reading says
-// more.
-import { trackingPageUrl } from "./dhl/search.mjs";
+// `detail: "DHL"` (or "DPD") marks an Amazon Shipment whose Status and
+// Estimate now come from that Carrier; Amazon readings then only refresh its
+// title. A Carrier's answer without tracking information (Unknown) doesn't
+// take over: Amazon's own reading says more.
+import { carrierKey, carrierKeys, isNumberCarrier, trackingPageUrl } from "./carriers.mjs";
 import { applyReading } from "./shipments.mjs";
 
 // The Shipment that holds this tracking number: the Amazon one when it is
-// merged, else the DHL one keyed on the number.
+// merged, else the Carrier's own one keyed on the number.
 export function findByTrackingNumber(list, trackingNumber) {
+  const keys = carrierKeys(trackingNumber);
   return list.find((s) => s.source === "Amazon" && s.trackingNumber === trackingNumber)
-    ?? list.find((s) => s.key === `dhl:${trackingNumber}`);
+    ?? list.find((s) => keys.includes(s.key));
 }
 
-// Amazon Shipments whose Carrier is DHL get DHL's detail, from the Sendungsliste
-// or the anonymous lookup.
-export const carriedByDhl = (s) => s.source === "Amazon" && s.carrier === "DHL" && Boolean(s.trackingNumber);
+// The Carrier whose detail an Amazon Shipment gets (from the Sendungsliste or
+// the anonymous lookup), or null: DHL or DPD, with a tracking number.
+export const carrierDetailOf = (s) => (s.source === "Amazon" && isNumberCarrier(s.carrier) && Boolean(s.trackingNumber) ? s.carrier : null);
 
-// Applies what DHL says (see dhl/status.mjs) to a DHL or merged Shipment.
-export function applyDhlReading(shipment, reading, now) {
+// Applies what the Carrier says (see dhl/status.mjs, dpd/status.mjs) to its
+// own or a merged Shipment.
+export function applyCarrierReading(shipment, reading, now, carrier = "DHL") {
   if (shipment.source !== "Amazon") return applyReading(shipment, reading, now);
-  if (shipment.detail !== "DHL") {
+  if (shipment.detail !== carrier) {
     if (reading.status === "Unknown") return;
-    takeOver(shipment);
+    takeOver(shipment, carrier);
   }
-  // The item's title from the Order beats DHL's sender name.
+  // The item's title from the Order beats the Carrier's sender name.
   applyReading(shipment, { ...reading, title: null }, now);
 }
 
-// Applies an Amazon tracker reading: all of it, or only the title once DHL
-// provides the detail.
+export const applyDhlReading = (shipment, reading, now) => applyCarrierReading(shipment, reading, now, "DHL");
+
+// Applies an Amazon tracker reading: all of it, or only the title once a
+// Carrier provides the detail.
 export function applyAmazonReading(shipment, reading, now) {
-  if (shipment.detail !== "DHL") return applyReading(shipment, reading, now);
+  if (!shipment.detail) return applyReading(shipment, reading, now);
   if (reading.title) shipment.title = reading.title;
   shipment.lastSeenAt = now.toISOString();
 }
 
-// Folds the DHL Shipment with the same tracking number into this Amazon
-// Shipment, if there is one: the Connections that know it, its notification
-// mark and, when DHL knows the number, DHL's detail. Returns whether it merged.
+// Folds the Carrier's own Shipment with the same tracking number (DHL or
+// DPD) into this Amazon Shipment, if there is one: the Connections that know
+// it, its notification mark and, when the Carrier knows the number, its
+// detail. Returns whether it merged.
 export function absorbDhlTwin(list, amazon) {
   if (!amazon.trackingNumber) return false;
-  const i = list.findIndex((s) => s !== amazon && s.key === `dhl:${amazon.trackingNumber}`);
+  const keys = carrierKeys(amazon.trackingNumber);
+  const i = list.findIndex((s) => s !== amazon && keys.includes(s.key));
   if (i < 0) return false;
   const [dhl] = list.splice(i, 1);
   for (const c of dhl.connections) if (!amazon.connections.includes(c)) amazon.connections.push(c);
-  // A DHL number added by hand stays one when the Amazon side goes (releaseToDhl).
+  // A number added by hand stays one when the Amazon side goes (releaseToDhl).
   if (dhl.connections.includes("manual")) amazon.manualTrackingNumber = true;
+  // A DPD Predict mail's window (mail/window.mjs) stays with the parcel.
+  if (dhl.mailWindow) amazon.mailWindow = dhl.mailWindow;
   if (dhl.discoveredAt < amazon.discoveredAt) amazon.discoveredAt = dhl.discoveredAt;
   const detailed = dhl.status !== "Unknown" && Boolean(dhl.lastSeenAt);
   if (detailed) {
-    takeOver(amazon);
+    takeOver(amazon, dhl.source);
     for (const field of ["status", "estimate", "delayed", "lastWindowTo", "terminalAt", "changedAt", "direction", "trackingEvent", "live"]) {
       if (dhl[field] === undefined) delete amazon[field];
       else amazon[field] = dhl[field];
@@ -76,34 +85,37 @@ export function absorbDhlTwin(list, amazon) {
 }
 
 // Whether this Amazon Shipment, having lost its Amazon account, still has a
-// DHL side: the Sendungsliste lists it, or its DHL number was added by hand.
+// Carrier side: DHL's Sendungsliste lists it, or its DHL or DPD number was
+// added by hand.
 export const hasDhlSide = (s) => Boolean(s.trackingNumber)
   && (s.connections.includes("dhl") || (s.manualTrackingNumber === true && s.connections.includes("manual")));
 
 // The other way round, when the Amazon account is removed: the Shipment turns
-// back into a DHL Shipment keyed on its tracking number. It keeps its
-// Connections (a "manual" mark included), DHL's detail, its notification mark
-// and a dismissal, so nothing is announced again; the Order's title stays until
-// DHL names a sender. Amazon's own Estimate no longer counts towards Delayed,
-// and its item image goes (a DHL card has none).
+// back into a Shipment of its Carrier (DPD when Amazon named DPD, else DHL)
+// keyed on its tracking number. It keeps its Connections (a "manual" mark
+// included), the Carrier's detail, its notification mark and a dismissal, so
+// nothing is announced again; the Order's title stays until the Carrier names
+// a sender. Amazon's own Estimate no longer counts towards Delayed, and its
+// item image goes (a Carrier's card has none).
 export function releaseToDhl(s) {
-  if (s.detail !== "DHL") {
+  const carrier = s.carrier === "DPD" && !s.connections.includes("dhl") ? "DPD" : "DHL";
+  if (s.detail !== carrier) {
     s.delayed = false;
     delete s.lastWindowTo;
   }
-  s.key = `dhl:${s.trackingNumber}`;
-  s.source = "DHL";
+  s.key = carrierKey(carrier, s.trackingNumber);
+  s.source = carrier;
   s.account = null;
-  s.carrier = "DHL";
-  s.url = trackingPageUrl(s.trackingNumber);
+  s.carrier = carrier;
+  s.url = trackingPageUrl(carrier, s.trackingNumber);
   for (const field of ["orderId", "detail", "probedBy", "linkOnly", "manualTrackingNumber", "imageUrl", "image"]) delete s[field];
   return s;
 }
 
-// From now on DHL's readings set Status, Estimate and Delayed; Amazon's
-// earlier promise doesn't count towards Delayed.
-function takeOver(shipment) {
-  shipment.detail = "DHL";
+// From now on the Carrier's readings set Status, Estimate and Delayed;
+// Amazon's earlier promise doesn't count towards Delayed.
+function takeOver(shipment, carrier) {
+  shipment.detail = carrier;
   shipment.delayed = false;
   delete shipment.lastWindowTo;
 }

@@ -1,5 +1,5 @@
 // Shipment records in shipments.json. Terms follow CONTEXT.md.
-import { trackingPageUrl } from "./dhl/search.mjs";
+import { carrierKey, carrierOfNumber, trackingPageUrl } from "./carriers.mjs";
 import { endsLater } from "./estimate.mjs";
 
 export const TERMINAL = new Set(["Delivered", "Returned"]);
@@ -9,35 +9,40 @@ const TRACKING_NUMBER = /^[A-Z0-9]{8,40}$/;
 // What the user typed into the add field → { kind, id } or { error }.
 export function parseManualId(input) {
   const raw = String(input ?? "").trim();
-  // The format decides the Source: an Amazon Order ID, else a DHL number.
+  // The format decides the Source: an Amazon Order ID, else the Carrier the
+  // number's format names (carriers.mjs: DPD's 14 digits, else DHL). `kind`
+  // is the key's prefix.
   if (AMAZON_ORDER_ID.test(raw)) return { kind: "amazon", id: raw };
   const id = raw.replace(/\s+/g, "").toUpperCase();
   if (!TRACKING_NUMBER.test(id)) return { error: "That doesn't look like a tracking number." };
-  return { kind: "dhl", id };
+  const carrier = carrierOfNumber(id);
+  return { kind: carrierKey(carrier, id).split(":")[0], carrier, id };
 }
 
-export function manualDhlShipment(trackingNumber, now) {
+// A Shipment whose Source is the Carrier of the number (a manual add, or a
+// number found in mail), Unknown until its first lookup.
+export function manualShipment(trackingNumber, now, carrier = carrierOfNumber(trackingNumber)) {
   const at = now.toISOString();
   return {
-    key: `dhl:${trackingNumber}`,
+    key: carrierKey(carrier, trackingNumber),
     direction: "Incoming",
-    source: "DHL",
+    source: carrier,
     account: null,
-    carrier: "DHL",
+    carrier,
     connections: ["manual"],
     title: trackingNumber,
     status: "Unknown",
     estimate: { from: null, to: null, text: "Looking up…" },
     delayed: false,
     trackingNumber,
-    url: trackingPageUrl(trackingNumber),
+    url: trackingPageUrl(carrier, trackingNumber),
     changedAt: at,
     discoveredAt: at,
     lastSeenAt: null,
   };
 }
 
-// Applies what the Carrier currently says (see dhl/status.mjs) to a Shipment.
+// Applies what the Carrier currently says (see dhl/status.mjs, dpd/status.mjs) to a Shipment.
 // Delayed: set when the delivery window ends later than the last one seen
 // (`lastWindowTo` survives runs without a window), cleared on turning Terminal.
 export function applyReading(shipment, reading, now) {

@@ -1,11 +1,13 @@
 // One refresh run: the only writer of Status, Health and events[].
 //
 // Run order (spec #21): the DHL Connection (when logged in), then anonymous
-// lookups of the DHL numbers the Sendungsliste didn't list (manual adds and
-// numbers learned from Amazon), then the Microsoft 365 mailbox, then each
-// Amazon account (so an Order first seen in mail gets its tracker page in the
-// same run), then lookups of DHL numbers Amazon or mail showed for the first
-// time.
+// lookups of the DHL and DPD numbers the Sendungsliste didn't list (manual
+// adds, numbers found in mail and numbers learned from Amazon; see
+// carriers.mjs), then the Microsoft 365 mailbox, then each Amazon account (so
+// an Order first seen in mail gets its tracker page in the same run), then
+// lookups of numbers Amazon or mail showed for the first time. DPD has no
+// Connection: its lookups, like DHL's anonymous ones, have no Health, and a
+// failed one only leaves its row as it was.
 // Each number is looked up at most once per run. `source` limits the run to
 // one Connection key ("dhl", "mail" or "amazon:<label>", for Retry); lookups
 // then wait for the next full run. A Connection that fails never stops the
@@ -44,8 +46,7 @@ import { refreshAmazon } from "./amazon/connection.mjs";
 import { hasTokens } from "./dhl/auth.mjs";
 import { applyDhlSync, KEY as DHL, syncDhl } from "./dhl/connection.mjs";
 import { deliveryClose } from "./dhl/live.mjs";
-import { lookupAnonymous } from "./dhl/search.mjs";
-import { readDhlElement } from "./dhl/status.mjs";
+import { isNumberCarrier, lookUpNumber } from "./carriers.mjs";
 import { KEY as MAIL, refreshMail } from "./mail/connection.mjs";
 import { waitForNetwork } from "./connectivity.mjs";
 import { clearUpdatedDismissals } from "./dismiss.mjs";
@@ -54,7 +55,9 @@ import { recordConnectionEvents, recordFailure } from "./health.mjs";
 import { fetchImages, removeUnusedImages } from "./images.mjs";
 import { recordExtensions } from "./login-hint.mjs";
 import { clearStaleLogins } from "./logins.mjs";
-import { applyDhlReading, carriedByDhl } from "./merge.mjs";
+import { localDate } from "./amazon/status.mjs";
+import { withMailWindow } from "./mail/window.mjs";
+import { applyCarrierReading, carrierDetailOf } from "./merge.mjs";
 import { applyRetention } from "./retention.mjs";
 import { TERMINAL } from "./shipments.mjs";
 import { readState, updateState } from "./state.mjs";
@@ -63,11 +66,14 @@ const MAX_ROUNDS = 3;
 // As the plugin's Store: a run that died without clearing `refreshing` stops counting.
 const RUN_IN_FLIGHT_MS = 15 * 60_000;
 
-// Manual DHL adds, DHL numbers found in mail and DHL numbers learned from
-// Amazon are looked up anonymously, one request per number per run. Terminal
-// Shipments are never re-fetched.
-const needsLookup = (s) => !TERMINAL.has(s.status)
-  && ((s.source === "DHL" && (s.connections.includes("manual") || s.connections.includes("mail"))) || carriedByDhl(s));
+// Manual adds, numbers found in mail and numbers learned from Amazon are
+// looked up anonymously at their Carrier (DHL or DPD), one request per number
+// per run. Terminal Shipments are never re-fetched. The Carrier to ask, or null.
+const lookupCarrier = (s) => {
+  if (TERMINAL.has(s.status)) return null;
+  if (s.source === "Amazon") return carrierDetailOf(s);
+  return isNumberCarrier(s.source) && (s.connections.includes("manual") || s.connections.includes("mail")) ? s.source : null;
+};
 
 // `firstSync`: this run is the first sync of the `source` Connection after a
 // Login, so what it discovers is not announced as new.
@@ -158,18 +164,18 @@ async function refreshOnce({ stateDir, env, now, transport, chrome, mcp, sleep, 
   const lookUp = async ({ afterAmazon = false } = {}) => {
     for (let round = 0; round < (source === null ? MAX_ROUNDS : 0); round++) {
       const snapshot = await readState(stateDir);
-      const targets = [...new Set(snapshot.shipments.shipments
-        .filter((s) => needsLookup(s) && !attempted.has(s.trackingNumber))
-        .map((s) => s.trackingNumber))];
-      if ((round > 0 || afterAmazon) && targets.length === 0) break;
+      const targets = new Map(snapshot.shipments.shipments
+        .filter((s) => lookupCarrier(s) && !attempted.has(s.trackingNumber))
+        .map((s) => [s.trackingNumber, lookupCarrier(s)]));
+      if ((round > 0 || afterAmazon) && targets.size === 0) break;
 
       const readings = new Map();
-      for (const trackingNumber of targets) {
+      for (const [trackingNumber, carrier] of targets) {
         attempted.add(trackingNumber);
-        const result = await lookupAnonymous(transport, trackingNumber);
-        const reading = result.ok ? readDhlElement(result.element) : null;
+        const result = await lookUpNumber(transport, carrier, trackingNumber, now());
+        const reading = result.ok ? result.reading : null;
         if (reading) {
-          readings.set(trackingNumber, reading);
+          readings.set(trackingNumber, { carrier, reading });
           counts.lookedUp++;
           if (reading.status === "Unknown") counts.unknown++;
         } else {
@@ -180,9 +186,12 @@ async function refreshOnce({ stateDir, env, now, transport, chrome, mcp, sleep, 
 
       await updateState(stateDir, ({ shipments, sources }) => {
         const at = now();
+        const today = localDate(at, timeZone);
         for (const s of shipments.shipments) {
-          const reading = needsLookup(s) ? readings.get(s.trackingNumber) : undefined;
-          if (reading) applyDhlReading(s, reading, at);
+          const read = readings.get(s.trackingNumber);
+          if (!read || lookupCarrier(s) !== read.carrier) continue;
+          // A Predict mail's time window stands in where the Carrier gives none.
+          applyCarrierReading(s, withMailWindow(s, read.reading, today), at, read.carrier);
         }
         finishRun(sources, at);
       });

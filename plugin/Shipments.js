@@ -161,7 +161,8 @@ function age(iso, nowMs) {
   return Math.round(h / 24) + " d ago"
 }
 
-// "DHL", "Amazon · Personal", "Amazon · Personal via DHL". Amazon Logistics
+// "DHL", "DPD", "Amazon · Personal", "Amazon · Personal via DHL" (or "via
+// DPD"). Amazon Logistics
 // is Amazon's own Carrier, so it gets no "via". An Order only mail knows:
 // "Amazon · from mail".
 function sourceLabel(s) {
@@ -302,29 +303,45 @@ function stepFilled(p, index) {
   return p.reverse ? index >= STEPS - p.steps : index < p.steps
 }
 
-// What the add field would become as a DHL tracking number (mirrors the CLI's
+// What the add field would become as a tracking number (mirrors the CLI's
 // parseManualId, for the immediate "Looking up…" row only).
 function normalizeTrackingNumber(text) {
   return String(text || "").replace(/\s+/g, "").toUpperCase()
 }
 
 // The add field's format decides the Source, as in the CLI's parseManualId:
-// an Amazon Order ID (NNN-NNNNNNN-NNNNNNN), else a DHL tracking number.
+// an Amazon Order ID (NNN-NNNNNNN-NNNNNNN), else the Carrier the number's
+// format names (carriers.mjs): DPD's 14 digits, else DHL.
 function isAmazonOrderId(id) {
   return /^\d{3}-\d{7}-\d{7}$/.test(String(id || ""))
 }
 
+function isDpdNumber(id) {
+  return /^\d{14}$/.test(String(id || ""))
+}
+
+// "Amazon", "DPD" or "DHL", for a normalized ID.
+function manualSource(id) {
+  return isAmazonOrderId(id) ? "Amazon" : isDpdNumber(id) ? "DPD" : "DHL"
+}
+
 // The key `add` will write for a normalized ID.
 function manualKey(id) {
-  return (isAmazonOrderId(id) ? "amazon:" : "dhl:") + id
+  return manualSource(id).toLowerCase() + ":" + id
+}
+
+// The keys a tracking number can have as a Carrier's own Shipment.
+function carrierKeys(trackingNumber) {
+  return ["dhl:" + trackingNumber, "dpd:" + trackingNumber]
 }
 
 // The immediate "Looking up…" row for an ID `add` hasn't written yet.
 function queuedRow(id, at) {
-  var amazon = isAmazonOrderId(id)
-  return { key: "queued:" + id, direction: "Incoming", source: amazon ? "Amazon" : "DHL", account: null,
-    carrier: amazon ? null : "DHL", title: id, status: "Unknown", estimate: { text: "Looking up…" }, delayed: false,
-    url: amazon ? amazonOrderUrl(id) : dhlTrackingUrl(id), changedAt: at, discoveredAt: at }
+  var source = manualSource(id)
+  var url = source === "Amazon" ? amazonOrderUrl(id) : source === "DPD" ? dpdTrackingUrl(id) : dhlTrackingUrl(id)
+  return { key: "queued:" + id, direction: "Incoming", source: source, account: null,
+    carrier: source === "Amazon" ? null : source, title: id, status: "Unknown", estimate: { text: "Looking up…" }, delayed: false,
+    url: url, changedAt: at, discoveredAt: at }
 }
 
 function amazonOrderUrl(orderId) {
@@ -333,6 +350,11 @@ function amazonOrderUrl(orderId) {
 
 function dhlTrackingUrl(trackingNumber) {
   return "https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=" + encodeURIComponent(trackingNumber)
+}
+
+// As the CLI's dpd/search.mjs trackingPageUrl.
+function dpdTrackingUrl(trackingNumber) {
+  return "https://my.dpd.de/redirect.aspx?action=12&parcelno=" + encodeURIComponent(trackingNumber)
 }
 
 // ---- Connections and their Health (spec #21, "Health"; copy from #19)
