@@ -3,7 +3,7 @@
 // entry per account) and Microsoft 365 mail, each with its state summary;
 // only one is open, and when the page opens the first Source not set up yet
 // is (Store.openRow). Below: the notifications switch (the footer bell's
-// setting), uninstalling the refresh timer, and Done.
+// setting), background refresh on / off (#90), and Done.
 import QtQuick
 import qs.Commons
 import qs.Ui
@@ -98,7 +98,9 @@ Column {
     onClicked: root.store.toggleNotifications()
   }
 
-  // ---- The refresh timer, and Done
+  // ---- Background refresh (#90): off until turned on here or in the row
+  // that asks after the first Login. The line below says what gets written;
+  // Turn off asks inline first and stays off across shell starts.
   Item {
     width: root.width
     height: Math.max(timerRow.implicitHeight, doneButton.implicitHeight)
@@ -109,14 +111,14 @@ Column {
       anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(6)
-      readonly property bool installed: !root.store || root.store.timerInstalled !== false
+      readonly property bool on: !!root.store && root.store.timerInstalled === true
       Text {
         id: timerText
         anchors.verticalCenter: parent.verticalCenter
         width: Math.min(implicitWidth, timerRow.width - timerButtons.implicitWidth - timerRow.spacing)
         wrapMode: Text.WordWrap
-        text: root.confirmUninstall ? "Stop refreshing and remove the timer?"
-          : timerRow.installed ? "Refreshes hourly in the background" : "Background refresh is off"
+        text: root.confirmUninstall ? "Stop and remove the timers?"
+          : timerRow.on ? "Refreshes in the background" : "Background refresh is off"
         color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.caption
       }
       Row {
@@ -128,15 +130,15 @@ Column {
           enabled: !!root.store && !root.store.timerBusy && root.store.nodeOk !== false
           opacity: enabled ? 1 : 0.45
           bordered: true; fontSize: Style.font.caption
-          text: timerRow.installed ? "Uninstall timer" : "Install timer"
+          text: timerRow.on ? "Turn off" : "Turn on"
           onClicked: {
-            if (timerRow.installed) root.confirmUninstall = true
+            if (timerRow.on) root.confirmUninstall = true
             else root.store.installTimer()
           }
         }
         Button {
           visible: root.confirmUninstall
-          bordered: true; fontSize: Style.font.caption; text: "Uninstall"
+          bordered: true; fontSize: Style.font.caption; text: "Turn off"
           onClicked: { root.confirmUninstall = false; root.store.uninstallTimer() }
         }
         Button {
@@ -155,12 +157,13 @@ Column {
       onClicked: root.store.setPage("list")
     }
   }
-  // After uninstalling: why the timer may come back.
+  // What Turn on writes (off), or what is installed (on).
   Text {
-    visible: !!root.store && root.store.timerInstalled === false
     width: root.width
     wrapMode: Text.WordWrap
-    text: "The widget installs the timer again when the shell starts. To keep it off, remove the widget from the bar."
+    text: root.store && root.store.timerInstalled === true
+      ? "Two systemd user timers: hourly, and every 15 min while a DHL parcel is due."
+      : "Turn on adds two systemd user timers to ~/.config/systemd/user: hourly, and every 15 min while a DHL parcel is due."
     color: Qt.darker(root.fg, 1.6); font.family: root.ff; font.pixelSize: Style.font.caption
   }
 }

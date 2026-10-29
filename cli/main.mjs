@@ -20,7 +20,7 @@ import { findByTrackingNumber } from "./merge.mjs";
 import { refresh } from "./refresh.mjs";
 import { manualShipment, parseManualId, removeManual } from "./shipments.mjs";
 import { stateDirFor, updateState } from "./state.mjs";
-import { install, uninstall } from "./systemd.mjs";
+import { ensureTimers, install, uninstall } from "./systemd.mjs";
 
 const USAGE = `usage: shipment-tracker <command>
   add <id>               track a DHL or DPD tracking number or an Amazon Order ID by hand
@@ -43,8 +43,11 @@ const USAGE = `usage: shipment-tracker <command>
                          the same for DHL, but only while a DHL Shipment is out
                          for delivery or due today (the 15-min timer runs it)
   clear-stale-logins     end Logins whose process is gone as failed (the plugin runs it on load)
-  install                install the hourly and the 15-min refresh timers (idempotent)
-  uninstall              remove the refresh timers and services`;
+  install                turn background refresh on: install the hourly and the
+                         15-min refresh timers (idempotent)
+  uninstall              turn background refresh off: remove the timers and services
+  ensure-timers          re-install the timers if background refresh is on (the
+                         plugin runs it on load); never turns it on by itself`;
 
 export async function main(argv, deps) {
   const [command, ...args] = argv;
@@ -77,9 +80,11 @@ export async function main(argv, deps) {
     case "clear-stale-logins":
       return clearStale(run);
     case "install":
-      return install(deps);
+      return install(run);
     case "uninstall":
-      return uninstall(deps);
+      return uninstall(run);
+    case "ensure-timers":
+      return ensureTimers(run);
     default:
       deps.log(USAGE);
       return 2;

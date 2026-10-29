@@ -62,6 +62,12 @@ Sources page:
 - **Microsoft 365 mail**: **Connect mail** shows a device code to enter at
   microsoft.com/devicelogin.
 
+After your first login the row asks whether to refresh in the background
+(**Turn on background refresh** or **Not now**). It asks once; the bottom of
+the Sources page has **Turn on** / **Turn off** for later. Without it,
+Shipments refresh when you open the popup (once the list is over an hour
+old) or click refresh.
+
 Or paste a tracking number or Amazon order ID in the field at the bottom of the
 list.
 
@@ -72,11 +78,15 @@ list.
   `cli/` folder holds the `shipment-tracker` command-line tool (Node.js) that
   fetches and stores everything. Tests, docs and dev scripts in `test/`,
   `docs/`, `scripts/` and `.agents/` are not loaded by the shell.
-- **systemd user timers**: when the shell starts with the widget enabled, it
-  installs `shipment-tracker-refresh.timer` (hourly) and
+- **systemd user timers**, only once you turn background refresh on: the
+  widget then installs `shipment-tracker-refresh.timer` (hourly) and
   `shipment-tracker-refresh-close.timer` (every 15 minutes; does nothing unless
   a DHL parcel is out for delivery or due today), with their services, in
-  `~/.config/systemd/user/`. The Sources page has **Uninstall timer**.
+  `~/.config/systemd/user/`. Nothing is written there before. While it's on,
+  the widget repairs the units when the shell starts (e.g. after Node.js
+  moved); **Turn off** removes them, and they stay off. The choice is kept in
+  the state dir (`backgroundRefresh` in `sources.json`). Timers installed by
+  an earlier version count as on.
 - **The mail server**, only once you connect Microsoft 365 mail: the
   [Softeria ms-365-mcp-server](https://github.com/Softeria/ms-365-mcp-server),
   pinned to an exact version (`mail-server/package.json`) and lockfile
@@ -117,14 +127,14 @@ Sources page asks you to accept it per account.
 1. Sign out of what you connected (optional, but it deletes the logins): on the
    Sources page, **Disconnect** DHL and Microsoft 365 mail and remove each
    Amazon account.
-2. Remove the background refresh: **Uninstall timer** on the Sources page, or
+2. Remove the background refresh, if you turned it on: **Turn off** on the
+   Sources page, or
 
    ```sh
    node ~/.config/omarchy/plugins/kreuzhofer.shipment-tracker/cli/shipment-tracker.mjs uninstall
    ```
 
-   Do this before removing the plugin. While the widget is enabled, it
-   installs the timers again when the shell starts.
+   Do this before removing the plugin, which doesn't remove the timers itself.
 3. Remove the plugin:
 
    ```sh
