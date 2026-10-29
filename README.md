@@ -86,7 +86,8 @@ list.
   (for the keyring). It's never committed and is re-created after an update if
   needed.
 
-Nothing is installed with sudo, and no system files are changed.
+No sudo or pkexec is required, and no system files are changed. (If you let
+the widget install Node.js, `omarchy pkg add` asks for your password.)
 
 ## Privacy: where your data lives
 
