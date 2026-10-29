@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "kreuzhofer.shipment-tracker",
   "name": "Shipment tracker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "kreuzhofer",
   "license": "MIT",
-  "description": "Your recent DHL and Amazon Shipments in the bar. Needs Node.js for the shipment-tracker CLI.",
+  "description": "Your recent DHL, DPD and Amazon Shipments in the bar, optionally found in Microsoft 365 mail. Needs Node.js for the shipment-tracker CLI.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DHL_LOGIN_PORT } from "../plugin/cli/ports.mjs";
+import { DHL_LOGIN_PORT } from "../cli/ports.mjs";
 import { fakeChrome, fakeDhl, fakeDhlAccount, fixture, makeWorld } from "./harness.mjs";
 import {
   captchaPage, cvfPage, historyPage, otpPage, signInPage, trackerPage, trackerPageWithoutState, wafPage,

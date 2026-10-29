@@ -1,12 +1,12 @@
 // When the plugin refreshes by itself (#79): on opening the popup with a
-// stale or offline list, and once after a resume. Loads plugin/Freshness.js
+// stale or offline list, and once after a resume. Loads Freshness.js
 // as the QML engine does (a plain script once `.pragma library` is gone).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-const source = readFileSync(new URL("../plugin/Freshness.js", import.meta.url), "utf8").replace(".pragma library", "");
+const source = readFileSync(new URL("../Freshness.js", import.meta.url), "utf8").replace(".pragma library", "");
 const F = vm.runInNewContext(`${source}\n;({ stale, shouldRefresh, wokeUp, WAKE_DELAY_MS })`, {});
 
 const NOW = Date.parse("2026-09-29T09:52:36Z");

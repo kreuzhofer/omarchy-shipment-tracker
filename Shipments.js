@@ -197,7 +197,7 @@ function statusLine(s) {
 // ---- DHL's live tour data (#80, variant B): on an Out for delivery card, a
 // stops chip next to the Status, step 4 of the bar filling with the share of
 // the tour driven, and the estimated arrival on the right. The CLI keeps
-// `live` only while Out for delivery (plugin/cli/dhl/live.mjs).
+// `live` only while Out for delivery (cli/dhl/live.mjs).
 
 function liveOf(s) {
   return s && s.status === "Out for delivery" && s.live ? s.live : null
