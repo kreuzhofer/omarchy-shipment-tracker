@@ -34,6 +34,13 @@ const CARRIERS = {
 export const NUMBER_CARRIERS = Object.keys(CARRIERS);
 export const isNumberCarrier = (name) => Object.hasOwn(CARRIERS, name ?? "");
 
+// Whether `value` is a plausible tracking number: 8 to 40 letters and digits.
+// Amazon's tracker page names `<orderId>-InvalidId` when a parcel has no
+// carrier tracking (#91); that, and anything else of another shape, is no
+// tracking number and is never stored, matched, looked up or searched for.
+const TRACKING_NUMBER = /^[A-Z0-9]{8,40}$/i;
+export const isTrackingNumber = (value) => typeof value === "string" && TRACKING_NUMBER.test(value);
+
 // What a number's format says: 14 digits are DPD's, anything else is DHL's
 // (spec #21: "anything else → DHL").
 export const carrierOfNumber = (trackingNumber) => (DPD_NUMBER.test(trackingNumber) ? "DPD" : "DHL");

@@ -9,7 +9,7 @@
 // Estimate now come from that Carrier; Amazon readings then only refresh its
 // title. A Carrier's answer without tracking information (Unknown) doesn't
 // take over: Amazon's own reading says more.
-import { carrierKey, carrierKeys, isNumberCarrier, trackingPageUrl } from "./carriers.mjs";
+import { carrierKey, carrierKeys, isNumberCarrier, isTrackingNumber, trackingPageUrl } from "./carriers.mjs";
 import { applyReading } from "./shipments.mjs";
 
 // The Shipment that holds this tracking number: the Amazon one when it is
@@ -22,7 +22,7 @@ export function findByTrackingNumber(list, trackingNumber) {
 
 // The Carrier whose detail an Amazon Shipment gets (from the Sendungsliste or
 // the anonymous lookup), or null: DHL or DPD, with a tracking number.
-export const carrierDetailOf = (s) => (s.source === "Amazon" && isNumberCarrier(s.carrier) && Boolean(s.trackingNumber) ? s.carrier : null);
+export const carrierDetailOf = (s) => (s.source === "Amazon" && isNumberCarrier(s.carrier) && isTrackingNumber(s.trackingNumber) ? s.carrier : null);
 
 // Applies what the Carrier says (see dhl/status.mjs, dpd/status.mjs) to its
 // own or a merged Shipment.
@@ -51,7 +51,7 @@ export function applyAmazonReading(shipment, reading, now) {
 // it, its notification mark and, when the Carrier knows the number, its
 // detail. Returns whether it merged.
 export function absorbDhlTwin(list, amazon) {
-  if (!amazon.trackingNumber) return false;
+  if (!isTrackingNumber(amazon.trackingNumber)) return false;
   const keys = carrierKeys(amazon.trackingNumber);
   const i = list.findIndex((s) => s !== amazon && keys.includes(s.key));
   if (i < 0) return false;
