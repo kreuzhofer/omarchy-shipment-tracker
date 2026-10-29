@@ -43,7 +43,7 @@ function stepsOf(html) {
   });
 }
 
-// How far each step is on the 5-step ladder: by its id, else by its wording
+// (the last step is `labStatusDelivered`, "Paket zugestellt", confirmed live).
 // (the last step's id wasn't recorded; "Paket zugestellt" names it).
 const LADDER = { 1: "Announced", 2: "In transit", 3: "In transit", 4: "Out for delivery", 5: "Delivered" };
 const STEP_IDS = { Start: 1, OnTheRoad: 2, DeliveryDepot: 3, CarLoad: 4, Delivered: 5 };
