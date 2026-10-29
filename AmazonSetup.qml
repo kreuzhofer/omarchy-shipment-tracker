@@ -147,6 +147,13 @@ Column {
     }
   }
 
+  // After an account's first successful Login: background refresh on? (#90)
+  RefreshConsent {
+    width: root.width
+    store: root.store; fg: root.fg; ff: root.ff
+    connectionKey: root.store && root.store.consentKey.indexOf("amazon:") === 0 ? root.store.consentKey : ""
+  }
+
   Button {
     visible: !root.formOpen
     bordered: true; iconText: "\u{F0415}"; text: "Add another Amazon account"; fontSize: Style.font.bodySmall

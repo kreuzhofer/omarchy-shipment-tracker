@@ -43,6 +43,9 @@ Column {
     connectionKey: "mail"
   }
 
+  // After the first successful Login: background refresh on? (#90)
+  RefreshConsent { width: root.width; store: root.store; fg: root.fg; ff: root.ff; connectionKey: "mail" }
+
   // The device code, in the row itself.
   Rectangle {
     visible: root.showsCode

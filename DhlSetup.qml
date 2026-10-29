@@ -25,11 +25,14 @@ Column {
   Text {
     width: root.width
     wrapMode: Text.WordWrap
-    text: "Finds every DHL parcel on your dhl.de account, Incoming and Outgoing. You log in once in a separate Chrome window; after that it refreshes hourly without a browser."
+    text: "Finds every DHL parcel on your dhl.de account, Incoming and Outgoing. You log in once in a separate Chrome window; after that it refreshes without a browser."
     color: Qt.darker(root.fg, 1.5); font.family: root.ff; font.pixelSize: Style.font.bodySmall
   }
 
   ConnectionLine { width: root.width; store: root.store; fg: root.fg; ff: root.ff; connectionKey: "dhl" }
+
+  // After the first successful Login: background refresh on? (#90)
+  RefreshConsent { width: root.width; store: root.store; fg: root.fg; ff: root.ff; connectionKey: "dhl" }
 
   Row {
     spacing: Style.space(6)

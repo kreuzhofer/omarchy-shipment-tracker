@@ -81,6 +81,7 @@ test("sources.json shows the dhl Connection as ok after its first sync", async (
     lastCount: 4,
     login: null,
     lastLogin: null,
+    loggedInAt: "2026-09-29T10:00:00.000Z",
   });
   assert.equal(sources.lastRun, "2026-09-29T10:00:00.000Z");
 });

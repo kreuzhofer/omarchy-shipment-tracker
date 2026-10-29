@@ -3,6 +3,8 @@
 // Health:
 //   login: { phase: "waiting" | "window" | "code" | "syncing", startedAt, expiresAt, returnTo, unit, pid, code?, url? }
 //   lastLogin: { result: "cancelled" | "timed-out" | "failed", at }
+//   loggedInAt: when the last successful Login ended (#90: the plugin asks
+//               about background refresh after the first one)
 // "waiting": an Amazon profile is held by a refresh (up to 90 s). "window":
 // the login window is open until `expiresAt` (15 minutes, every kind).
 // "code": a device-code sign-in (Microsoft 365 mail) shows `code` to enter
@@ -48,6 +50,7 @@ function end(connection, result, at) {
   const { returnTo } = connection.login;
   connection.login = null;
   connection.lastLogin = result === "ok" ? null : { result, at };
+  if (result === "ok") connection.loggedInAt = at;
   if (result !== "ok" && returnTo && connection.health !== returnTo) {
     connection.health = returnTo;
     connection.since = at;

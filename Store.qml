@@ -169,8 +169,13 @@ Item {
   }
 
   // "Refresh now": the oneshot service serializes with the hourly timer.
-  function refresh() {
-    Quickshell.execDetached(["systemctl", "--user", "start", "--no-block", root.refreshUnit])
+  // Without background refresh (#90) there is no unit file, so the same name
+  // runs as a transient unit: still one run at a time, nothing in ~/.config.
+  function refresh() { root.startRefreshUnit(root.refreshUnit, ["refresh"]) }
+  function startRefreshUnit(unit, args) {
+    Quickshell.execDetached(["sh", "-c",
+      'u=$1; shift; systemctl --user start --no-block "$u" 2>/dev/null || exec systemd-run --user --collect --quiet --unit="$u" node "$@"',
+      "sh", unit, root.cliPath].concat(args))
   }
 
   // After a resume (#79) the timer's catch-up run may find no network. The
@@ -208,7 +213,7 @@ Item {
   // Connection (the template instance runs `refresh --source <key>`).
   function retry(key) {
     if (!key) return
-    Quickshell.execDetached(["systemctl", "--user", "start", "--no-block", "shipment-tracker-refresh@" + Shipments.systemdEscape(key) + ".service"])
+    root.startRefreshUnit("shipment-tracker-refresh@" + Shipments.systemdEscape(key) + ".service", ["refresh", "--source", key])
   }
 
   // ---- Logins (spec #21, "Login window lifecycle"). `login <key>` runs as a
@@ -409,9 +414,11 @@ Item {
     if (p !== "list") { root.checkNode(); root.checkTimer() }
   }
   readonly property bool onSources: page !== "list"
-  // The accordion row that is open ("" for none).
+  // The accordion row that is open ("" for none). The row asking about
+  // background refresh (#90) comes first.
   readonly property string openRow: {
     if (page.indexOf("sources:") === 0) return page === "sources:none" ? "" : page.substring(8)
+    if (consentKey !== "") return consentKey.indexOf("amazon:") === 0 ? "amazon" : consentKey
     if (!Shipments.isSetUp(connection("dhl"))) return "dhl"
     if (!amazonAccounts.some(function(a) { return Shipments.isSetUp(a.connection) })) return "amazon"
     if (mailAvailable && !Shipments.isSetUp(connection("mail"))) return "mail"
@@ -459,7 +466,7 @@ Item {
       root.nodeInstalling = false
       // What failed on load without Node.
       if (was === false) {
-        installProcess.running = true
+        ensureTimersProcess.running = true
         clearStaleProcess.running = true
       }
     }
@@ -561,10 +568,24 @@ Item {
     }
   }
 
-  // The hourly refresh timer: null until checked, then true / false. The
-  // Sources page offers uninstalling it (before removing the widget; while
-  // the widget stays, it installs the timer again when the shell starts).
+  // Background refresh (#90): opt-in. The choice is `backgroundRefresh` in
+  // sources.json ("on" | "off" | "" = never asked), written by the CLI's
+  // install / uninstall. timerInstalled: the hourly timer is enabled; null
+  // until checked, then true / false.
+  readonly property string backgroundRefresh: sourcesState.backgroundRefresh || ""
   property var timerInstalled: null
+  // The Connection whose row asks once, after the latest successful Login,
+  // while nobody answered yet and no timer is installed; else "".
+  readonly property string consentKey: {
+    if (backgroundRefresh !== "" || timerInstalled !== false) return ""
+    var c = sourcesState.connections || {}
+    var best = "", at = ""
+    Object.keys(c).forEach(function(k) {
+      var x = c[k]
+      if (x && x.health === "ok" && x.loggedInAt && x.loggedInAt > at) { best = k; at = x.loggedInAt }
+    })
+    return best
+  }
   readonly property bool timerBusy: timerProcess.running
   function checkTimer() { if (!timerCheck.running) timerCheck.running = true }
   function uninstallTimer() { root.runTimerCommand("uninstall") }
@@ -584,10 +605,12 @@ Item {
     onExited: function(exitCode, exitStatus) { root.checkTimer() }
   }
 
-  // Installs (or refreshes) the timer and service units; idempotent.
+  // On load: re-installs (repairs) the units only if background refresh is
+  // on (#90); never turns it on by itself.
   Process {
-    id: installProcess
-    command: ["node", root.cliPath, "install"]
+    id: ensureTimersProcess
+    command: ["node", root.cliPath, "ensure-timers"]
+    onExited: function(exitCode, exitStatus) { root.checkTimer() }
   }
 
   Timer {
@@ -598,7 +621,7 @@ Item {
   }
 
   Component.onCompleted: {
-    installProcess.running = true
+    ensureTimersProcess.running = true
     clearStaleProcess.running = true
     checkNode()
   }
