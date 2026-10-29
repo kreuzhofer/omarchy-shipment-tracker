@@ -102,3 +102,17 @@ test("the tab count leaves out finished rows, delivered-per-mail ones too", () =
   assert.equal(rows[2].status, "Unknown");
   assert.equal(S.settled(rows[2]), true);
 });
+
+// DPD (#83): a pasted 14-digit number shows at once as a DPD row that opens
+// DPD's tracking page, and Amazon Shipments carried by DPD read "via DPD".
+const R = vm.runInNewContext(`${source}\n;({ queuedRow, manualKey, sourceLabel })`, {});
+
+test("a pasted DPD number is a DPD row at once, linking to DPD's tracking page", () => {
+  const row = R.queuedRow("09990000000001", TODAY);
+  assert.deepEqual([row.source, row.carrier, row.url], ["DPD", "DPD", "https://my.dpd.de/redirect.aspx?action=12&parcelno=09990000000001"]);
+  assert.equal(R.manualKey("09990000000001"), "dpd:09990000000001");
+  assert.equal(R.manualKey("00340434000000000011"), "dhl:00340434000000000011");
+  assert.equal(R.manualKey("305-5555555-5555555"), "amazon:305-5555555-5555555");
+  assert.equal(R.sourceLabel(row), "DPD");
+  assert.equal(R.sourceLabel({ source: "Amazon", account: "Personal", carrier: "DPD" }), "Amazon · Personal via DPD");
+});

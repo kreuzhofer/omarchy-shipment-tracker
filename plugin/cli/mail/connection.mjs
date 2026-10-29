@@ -7,12 +7,14 @@
 // - amazon.de mail of the last 30 days: each Order it names is kept as an
 //   Order-level row with the last mail's hint, until an Amazon account reads
 //   the Order (orders.mjs, amazon/manual.mjs);
-// - mail mentioning DHL, of the last 14 days, from any sender: each DHL number
-//   not tracked yet becomes a watched Shipment (numbers.mjs). What was shipped
-//   comes from that mail (item.mjs), read as HTML in a second, short server
-//   session when there is something new; that session failing only costs the
-//   item info.
-// Then, for DHL Shipments the list already has without item info (listed by
+// - mail mentioning DHL, and mail mentioning DPD (#83), of the last 14 days,
+//   from any sender: each DHL or DPD number not tracked yet becomes a watched
+//   Shipment (numbers.mjs). What was shipped comes from that mail (item.mjs),
+//   read as HTML in a second, short server session when there is something
+//   new; that session failing only costs the item info. A DPD Predict mail's
+//   delivery window goes to the Shipment holding its number, new or not
+//   (window.mjs).
+// Then, for DHL and DPD Shipments the list already has without item info (listed by
 // DHL's Sendungsliste, say), one search each for the tracking number, at most
 // MAX_SEARCHES per run and never repeated (`mailSearchedAt`); the mail that
 // names the number goes through the same item ladder (#70, the #54 plan).
@@ -31,6 +33,7 @@ import { markKnown, recordEvents } from "../events.mjs";
 import { clearUpdatedDismissals } from "../dismiss.mjs";
 import { recordConnectionEvents, recordFailure, recordOk } from "../health.mjs";
 import { runLogin } from "../logins.mjs";
+import { carrierKey } from "../carriers.mjs";
 import { findByTrackingNumber } from "../merge.mjs";
 import { droppedKeys, isDropped } from "../retention.mjs";
 import { TERMINAL } from "../shipments.mjs";
@@ -38,7 +41,7 @@ import { readState, updateState } from "../state.mjs";
 import { itemInfo } from "./item.mjs";
 import { lastAuthDetail, openServer, removeFiles, tightenFiles } from "./mcp.mjs";
 import { findNumbers } from "./numbers.mjs";
-import { addMailNumbers, applyItemSearches, applyMailOrders, KEY, settleMailOrders } from "./orders.mjs";
+import { addMailNumbers, applyItemSearches, applyMailOrders, applyMailWindows, KEY, settleMailOrders } from "./orders.mjs";
 import { readMails } from "./status.mjs";
 
 export { absorbMailOrders, KEY } from "./orders.mjs";
@@ -46,6 +49,7 @@ const SELECT = ["id", "receivedDateTime", "from", "subject", "body"];
 const AMAZON_SEARCH = { search: '"from:amazon.de"', select: SELECT, top: 100 };
 const AMAZON_WINDOW_DAYS = 30;
 const DHL_SEARCH = { search: '"DHL"', select: SELECT, top: 50 };
+const DPD_SEARCH = { search: '"DPD"', select: SELECT, top: 50 };
 const DHL_WINDOW_DAYS = 14;
 // HTML bodies fetched per run for the item ladder; more new numbers wait.
 const MAX_ITEM_MAILS = 5;
@@ -84,14 +88,14 @@ async function search(server, stateDir, args) {
   return Array.isArray(messages) ? { messages } : { reason: "shape" };
 }
 
-// The tracking numbers of DHL Shipments to search the mailbox for: no item
+// The tracking numbers of DHL and DPD Shipments to search the mailbox for: no item
 // info and not searched yet; not Terminal, or Terminal since less than 7
 // days. Not Terminal first, then the newest.
 function numbersToSearch(list, now) {
   const since = daysBefore(now, SEARCH_TERMINAL_DAYS).getTime();
   const recent = (s) => !TERMINAL.has(s.status) || Date.parse(s.terminalAt ?? s.changedAt) >= since;
   return list
-    .filter((s) => s.source === "DHL" && s.trackingNumber && !s.itemTitle && !s.mailSearchedAt && recent(s))
+    .filter((s) => (s.source === "DHL" || s.source === "DPD") && s.trackingNumber && !s.itemTitle && !s.mailSearchedAt && recent(s))
     .sort((a, b) => (TERMINAL.has(a.status) - TERMINAL.has(b.status)) || String(b.discoveredAt).localeCompare(String(a.discoveredAt)))
     .slice(0, MAX_SEARCHES)
     .map((s) => s.trackingNumber);
@@ -158,8 +162,8 @@ function itemSearchLine({ stats, fromRecent }, searched) {
     + `items named via schema ${via("schema")}, parser ${via("parser")}, subject ${via("subject")}`;
 }
 
-// Reads the mailbox: { ok: true, orders, numbers, searched, ignored } or { ok: false, reason }.
-// `known(trackingNumber)`: already tracked, so no item info is needed.
+// Reads the mailbox: { ok: true, orders, numbers, windows, searched, ignored } or { ok: false, reason }.
+// `known(trackingNumber, carrier)`: already tracked, so no item info is needed.
 // `toSearch`: tracking numbers of Shipments to search the mailbox for.
 async function readMailbox({ stateDir, mcp, now, timeZone, known, toSearch }) {
   let server;
@@ -172,25 +176,29 @@ async function readMailbox({ stateDir, mcp, now, timeZone, known, toSearch }) {
   }
   let amazon;
   let dhl;
+  let dpd;
   let numberSearch = { results: [], stats: { failed: 0, returned: 0, naming: 0 } };
   try {
     amazon = await search(server, stateDir, AMAZON_SEARCH);
     if (!amazon.reason) dhl = await search(server, stateDir, DHL_SEARCH);
-    if (!amazon.reason && !dhl.reason) numberSearch = await searchNumbers(server, stateDir, toSearch);
+    if (!amazon.reason && !dhl.reason) dpd = await search(server, stateDir, DPD_SEARCH);
+    if (!amazon.reason && !dhl.reason && !dpd.reason) numberSearch = await searchNumbers(server, stateDir, toSearch);
   } catch (e) {
     if (e.code !== "server") throw e;
     return { ok: false, reason: "server" };
   } finally {
     await server.close().catch(() => {});
   }
-  const reason = amazon.reason ?? dhl.reason;
+  const reason = amazon.reason ?? dhl.reason ?? dpd.reason;
   if (reason) return { ok: false, reason };
-  const numbers = findNumbers(dhl.messages, daysBefore(now(), DHL_WINDOW_DAYS)).filter((n) => !known(n.trackingNumber));
+  const found = findNumbers([...dhl.messages, ...dpd.messages], daysBefore(now(), DHL_WINDOW_DAYS), timeZone);
+  const windows = found.filter((n) => n.window).map(({ trackingNumber, window }) => ({ trackingNumber, window }));
+  const numbers = found.filter((n) => !known(n.trackingNumber, n.carrier));
   const searched = numberSearch.results;
-  const fromRecent = searchRecentMail(searched, [...dhl.messages, ...amazon.messages]);
+  const fromRecent = searchRecentMail(searched, [...dhl.messages, ...dpd.messages, ...amazon.messages]);
   await addItemInfo(numbers, searched, { stateDir, mcp });
   const itemSearch = { stats: numberSearch.stats, fromRecent };
-  return { ok: true, ...readMails(amazon.messages, daysBefore(now(), AMAZON_WINDOW_DAYS), timeZone), numbers, searched, itemSearch };
+  return { ok: true, ...readMails(amazon.messages, daysBefore(now(), AMAZON_WINDOW_DAYS), timeZone), numbers, windows, searched, itemSearch };
 }
 
 // The item ladder for each new number and each number searched for, on the
@@ -230,7 +238,7 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
   if (!mcp || !conn) return;
   if (!firstSync && (conn.health === "not-set-up" || conn.login)) return;
   const dropped = droppedKeys(shipments);
-  const known = (n) => isDropped(dropped, `dhl:${n}`) || Boolean(findByTrackingNumber(shipments.shipments, n));
+  const known = (n, carrier) => isDropped(dropped, carrierKey(carrier, n)) || Boolean(findByTrackingNumber(shipments.shipments, n));
   const toSearch = numbersToSearch(shipments.shipments, now());
   const outcome = await readMailbox({ stateDir, mcp, now, timeZone, known, toSearch });
   if (outcome.ok) counts.synced++;
@@ -260,6 +268,7 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
       const dropped = droppedKeys(shipments);
       applyMailOrders(shipments, outcome.orders, dropped, at, timeZone);
       count = addMailNumbers(shipments, outcome.numbers, dropped, at);
+      applyMailWindows(shipments, outcome.windows, at, timeZone);
       named = applyItemSearches(shipments, outcome.searched, at);
       recordOk(c, at, shipments.shipments.filter((s) => s.connections.includes(KEY)).length);
     }
@@ -273,7 +282,7 @@ export async function refreshMail({ stateDir, mcp, now, timeZone, log, counts, f
     return count;
   });
   log(outcome.ok
-    ? `refresh: mail ok, ${outcome.orders.length} Order(s), ${added} new DHL number(s), ${outcome.searched.length} searched for (${named} item(s) named)${outcome.ignored ? `, ${outcome.ignored} mail(s) ignored` : ""}`
+    ? `refresh: mail ok, ${outcome.orders.length} Order(s), ${added} new tracking number(s), ${outcome.searched.length} searched for (${named} item(s) named)${outcome.ignored ? `, ${outcome.ignored} mail(s) ignored` : ""}`
     : `refresh: mail failed (${outcome.reason})`);
   if (outcome.ok && (outcome.searched.length > 0 || outcome.itemSearch.stats.failed > 0)) log(itemSearchLine(outcome.itemSearch, outcome.searched));
   return { ...outcome, counted: countNetwork };

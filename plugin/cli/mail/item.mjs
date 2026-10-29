@@ -100,11 +100,15 @@ function fromSubject(subject, trackingNumber) {
   return title && !GENERIC.test(title) ? title : null;
 }
 
+const CARRIER_NOTICES = /(^|\.)dpd\.(de|com)$/;
 const domainOf = (address) => String(address ?? "").toLowerCase().split("@")[1] ?? "";
 
 // A Graph message (`html`: its HTML body when it could be fetched) →
 // { itemTitle, itemSource } or null.
 export function itemInfo(message, trackingNumber, html = null) {
+  // A Carrier's own notice (DPD's Predict mails) names the sender, never the
+  // item, and its subject ("Zwischen 13:31 und 15:31 Uhr …") isn't one.
+  if (CARRIER_NOTICES.test(domainOf(message.from?.emailAddress?.address))) return null;
   if (html) {
     const schema = fromSchema(html, trackingNumber);
     if (schema) return { itemTitle: schema, itemSource: "schema" };

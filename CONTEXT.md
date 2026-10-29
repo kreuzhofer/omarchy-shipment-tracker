@@ -21,15 +21,15 @@ _Avoid_: Purchase
 ### Where a Shipment comes from
 
 **Source**:
-The service through which the user learned of a Shipment and whose detail page it links to (Amazon or DHL).
+The service through which the user learned of a Shipment and whose detail page it links to (Amazon, DHL or DPD). A DHL or DPD Shipment is one whose number was added by hand, found in mail or (DHL) listed by the DHL account; its Status comes from the Carrier's tracking, read by number.
 _Avoid_: Provider, origin
 
 **Carrier**:
-The company physically moving the Shipment. May differ from the Source, e.g. an Amazon Shipment carried by DHL.
+The company physically moving the Shipment. May differ from the Source, e.g. an Amazon Shipment carried by DHL or DPD, which then takes that Carrier's Status.
 _Avoid_: Provider, courier
 
 **Connection**:
-One signed-in link the tracker reads Shipments through: the DHL account, one Amazon account, or the Microsoft 365 mailbox. A Source can have several Connections (Amazon with two accounts). The mailbox is a Connection that discovers and enriches but never decides a Status: it finds Amazon Orders and DHL tracking numbers, and what was shipped. The Sources page lists Connections.
+One signed-in link the tracker reads Shipments through: the DHL account, one Amazon account, or the Microsoft 365 mailbox. A Source can have several Connections (Amazon with two accounts). The mailbox is a Connection that discovers and enriches but never decides a Status: it finds Amazon Orders, DHL and DPD tracking numbers (and DPD's announced delivery window), and what was shipped. DPD has no Connection: its tracking is read anonymously by number. The Sources page lists Connections.
 _Avoid_: Integration, login, account (on its own)
 
 **Health**:

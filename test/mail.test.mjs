@@ -119,10 +119,10 @@ test("the sender names the step of the hint, never a Status; other Amazon mail i
 
   assert.equal(await world.run("refresh"), 0);
 
-  // Two searches per run: amazon.de mail, and mail that mentions DHL; then
-  // the HTML of the mail that named a new DHL number.
-  assert.deepEqual(world.mail.calls.map((c) => c.name), ["list-mail-messages", "list-mail-messages", "get-mail-message"]);
-  assert.deepEqual(account.searches.map((s) => s.search), ['"from:amazon.de"', '"DHL"']);
+  // Three searches per run: amazon.de mail, mail that mentions DHL and mail
+  // that mentions DPD; then the HTML of the mail that named a new DHL number.
+  assert.deepEqual(world.mail.calls.map((c) => c.name), ["list-mail-messages", "list-mail-messages", "list-mail-messages", "get-mail-message"]);
+  assert.deepEqual(account.searches.map((s) => s.search), ['"from:amazon.de"', '"DHL"', '"DPD"']);
   const file = await world.shipmentsFile();
   const byKey = Object.fromEntries(file.shipments.map((s) => [s.key, s]));
   assert.deepEqual(Object.keys(byKey).sort(), [
@@ -388,7 +388,7 @@ test("Retry with --source mail reads only the mailbox", async (t) => {
   assert.equal(await world.run("refresh", "--source", "mail"), 0);
 
   assert.equal(world.transport.refreshTokens.length, dhlTokenRequests);
-  assert.equal(account.searches.length, 2);
+  assert.equal(account.searches.length, 3);
   assert.ok(await world.shipment(`amazon:${ORDER_A}`));
 });
 

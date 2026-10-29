@@ -283,12 +283,14 @@ const CARRIER_TEXT = [
 const CARRIER_NUMBER = [
   { carrier: "DHL", when: /^(00340\d+|JJD[A-Z0-9]+)$/ },
   { carrier: "Amazon Logistics", when: /^DE[A-Z0-9]{10}$/ },
+  { carrier: "DPD", when: /^\d{14}$/ },
 ];
 
 function normalizeCarrier(name) {
   const n = name.trim();
   if (/^DHL\b/i.test(n) || /^Deutsche Post\b/i.test(n)) return "DHL";
   if (/^Amazon\b/i.test(n)) return "Amazon Logistics";
+  if (/^DPD\b/i.test(n)) return "DPD";
   return n;
 }
 

@@ -9,7 +9,7 @@
 // pickup and Problem cards get a coloured border; finished (Terminal, or
 // delivered per mail) and Dismissed cards are dimmed. Amazon cards lead with a square
 // tile (#58, option A of #54): the item's image, cached by the CLI, or a
-// package glyph until there is one; so do DHL cards whose item a mail named.
+// package glyph until there is one; so do DHL and DPD cards whose item a mail named.
 // An Order only mail knows shows "from mail" in its badge and the last mail's
 // hint instead of a Status, over an empty bar (#59). An Out for delivery card
 // with DHL's live tour data (#80, variant B) fills step 4 of the bar with the
@@ -307,7 +307,7 @@ Column {
       // A "Looking up…" card has nothing to dismiss yet.
       readonly property bool dismissable: String(s.key).indexOf("queued:") !== 0
       // Amazon cards (merged Amazon + DHL ones too, and Orders only mail
-      // knows) lead with the item tile, as do DHL cards whose item a mail
+      // knows) lead with the item tile, as do DHL and DPD cards whose item a mail
       // named (#59); without an image the tile shows the package glyph.
       readonly property bool tiled: s.source === "Amazon" || !!s.itemTitle
       readonly property int tileSize: root.cardHeight - Style.space(16)

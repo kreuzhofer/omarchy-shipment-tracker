@@ -8,7 +8,7 @@
 // the others back into stubs, so it is always all of them.
 import { connectionRecord, recordFailure, recordOk } from "../health.mjs";
 import { applyDhlReading, findByTrackingNumber } from "../merge.mjs";
-import { manualDhlShipment, TERMINAL } from "../shipments.mjs";
+import { manualShipment, TERMINAL } from "../shipments.mjs";
 import { renewIdToken } from "./auth.mjs";
 import { applyLive, readLiveTracking } from "./live.mjs";
 import { search } from "./search.mjs";
@@ -96,7 +96,7 @@ export function applyDhlSync({ shipments, sources }, outcome, now, timeZone) {
     listed.add(listing.trackingNumber);
     let shipment = findByTrackingNumber(shipments.shipments, listing.trackingNumber);
     if (!shipment) {
-      shipment = { ...manualDhlShipment(listing.trackingNumber, now), connections: [], estimate: null };
+      shipment = { ...manualShipment(listing.trackingNumber, now, "DHL"), connections: [], estimate: null };
       shipments.shipments.push(shipment);
     }
     if (!shipment.connections.includes(KEY)) shipment.connections.push(KEY);

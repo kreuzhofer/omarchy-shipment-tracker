@@ -18,12 +18,12 @@ import { loginMail } from "./mail/connection.mjs";
 import { fetchImages } from "./images.mjs";
 import { findByTrackingNumber } from "./merge.mjs";
 import { refresh } from "./refresh.mjs";
-import { manualDhlShipment, parseManualId, removeManual } from "./shipments.mjs";
+import { manualShipment, parseManualId, removeManual } from "./shipments.mjs";
 import { stateDirFor, updateState } from "./state.mjs";
 import { install, uninstall } from "./systemd.mjs";
 
 const USAGE = `usage: shipment-tracker <command>
-  add <id>               track a DHL tracking number or an Amazon Order ID by hand
+  add <id>               track a DHL or DPD tracking number or an Amazon Order ID by hand
   remove <shipmentKey>   stop tracking a Shipment added by hand
   dismiss <shipmentKey>  hide a Shipment until it gets a real update
   undismiss <shipmentKey>
@@ -101,12 +101,12 @@ async function add(args, stateDir, { now, log, out }) {
     const key = `${parsed.kind}:${parsed.id}`;
     shipments.dropped = shipments.dropped.filter((d) => d.key !== key && !d.key.startsWith(`${key}#`));
     if (parsed.kind === "amazon") return addManualOrder(shipments.shipments, parsed.id, now());
-    const shipment = manualDhlShipment(parsed.id, now());
+    const shipment = manualShipment(parsed.id, now(), parsed.carrier);
     // A number an Amazon Shipment already carries joins that Shipment.
     const existing = findByTrackingNumber(shipments.shipments, parsed.id);
     if (existing) {
       if (!existing.connections.includes("manual")) existing.connections.push("manual");
-      // It stays a DHL Shipment should the Amazon account go (see merge.mjs).
+      // It stays a Shipment of its Carrier should the Amazon account go (see merge.mjs).
       if (existing.source === "Amazon") existing.manualTrackingNumber = true;
       return false;
     }

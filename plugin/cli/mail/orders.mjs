@@ -10,17 +10,22 @@
 // - Every connected Amazon account looks for it like for a manual Order ID
 //   (amazon/manual.mjs). Once an account reads its packages, they replace it
 //   (absorbMailOrders), quietly when the row was already shown.
-// - A DHL number found in mail becomes a watched DHL Shipment, like a manual
-//   add (addMailNumbers), with what the mail says about the item.
-// - A DHL Shipment the list already has gets its item from the mail a search
-//   for its number found (applyItemSearches), once.
+// - A DHL or DPD number found in mail becomes a watched Shipment of that
+//   Carrier, like a manual add (addMailNumbers), with what the mail says
+//   about the item (and, from DPD's own mails, the sender's name).
+// - A DPD Predict mail's delivery window goes to the Shipment holding its
+//   number (applyMailWindows, see window.mjs).
+// - A DHL or DPD Shipment the list already has gets its item from the mail a
+//   search for its number found (applyItemSearches), once.
 import { orderDetailsUrl } from "../amazon/pages.mjs";
 import { localDate } from "../amazon/status.mjs";
 import { markOf } from "../dismiss.mjs";
 import { dayLabel, windowText } from "../estimate.mjs";
+import { carrierKey, carrierKeys } from "../carriers.mjs";
 import { findByTrackingNumber } from "../merge.mjs";
 import { isDropped } from "../retention.mjs";
-import { manualDhlShipment, TERMINAL } from "../shipments.mjs";
+import { manualShipment, TERMINAL } from "../shipments.mjs";
+import { applyMailWindow } from "./window.mjs";
 
 export const KEY = "mail";
 const STALE_DAYS = 3;
@@ -163,16 +168,17 @@ export function absorbMailOrders(list) {
   }
 }
 
-// DHL numbers found in mail (numbers.mjs, with item.mjs's `item`), under the
-// state lock: each new one is watched like a manual add (Status from the
-// anonymous lookup, Incoming, never "new"). A number already tracked, or
-// dropped by retention, is left alone. Returns how many were added.
+// DHL and DPD numbers found in mail (numbers.mjs, with item.mjs's `item`),
+// under the state lock: each new one is watched like a manual add (Status
+// from the anonymous lookup, Incoming, never "new"). A number already
+// tracked, or dropped by retention, is left alone. Returns how many were added.
 export function addMailNumbers(shipments, numbers, dropped, now) {
   let added = 0;
-  for (const { trackingNumber, item } of numbers) {
-    if (isDropped(dropped, `dhl:${trackingNumber}`) || findByTrackingNumber(shipments.shipments, trackingNumber)) continue;
-    const s = manualDhlShipment(trackingNumber, now);
+  for (const { trackingNumber, carrier = "DHL", item, sender } of numbers) {
+    if (isDropped(dropped, carrierKey(carrier, trackingNumber)) || findByTrackingNumber(shipments.shipments, trackingNumber)) continue;
+    const s = manualShipment(trackingNumber, now, carrier);
     s.connections = [KEY];
+    if (sender) s.title = sender;
     // Its mail already went through the item ladder: no search for it.
     s.mailSearchedAt = now.toISOString();
     if (item) Object.assign(s, item);
@@ -182,14 +188,24 @@ export function addMailNumbers(shipments, numbers, dropped, now) {
   return added;
 }
 
+// Predict mail windows (numbers.mjs) for the Shipments holding their numbers,
+// under the state lock, after new numbers were added.
+export function applyMailWindows(shipments, windows, now, timeZone) {
+  for (const { trackingNumber, window } of windows ?? []) {
+    const s = findByTrackingNumber(shipments.shipments, trackingNumber);
+    if (s && !TERMINAL.has(s.status)) applyMailWindow(s, window, now, timeZone);
+  }
+}
+
 // The searches for tracking numbers (connection.mjs), under the state lock:
-// each DHL Shipment searched for is marked, so it's never searched again, and
+// each DHL or DPD Shipment searched for is marked, so it's never searched again, and
 // gets the item the mail names. Nothing else changes: not the Status, nor
 // the last change, nor anything that notifies. Returns how many got an item.
 export function applyItemSearches(shipments, searched, now) {
   let named = 0;
   for (const { trackingNumber, item } of searched) {
-    const s = shipments.shipments.find((x) => x.key === `dhl:${trackingNumber}`);
+    const keys = carrierKeys(trackingNumber);
+    const s = shipments.shipments.find((x) => keys.includes(x.key));
     if (!s || s.itemTitle) continue;
     s.mailSearchedAt = now.toISOString();
     if (item) {

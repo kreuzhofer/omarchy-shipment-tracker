@@ -50,10 +50,10 @@ Item {
     var gone = {}
     pendingRemovals.concat(removedKeys).forEach(function(k) { gone[k] = true })
     var rows = (shipmentsState.shipments || []).filter(function(s) { return !gone[s.key] })
-    // A merged Amazon Shipment (#27) also stands for its DHL tracking number.
+    // A merged Amazon Shipment (#27) also stands for its DHL or DPD tracking number.
     rows.forEach(function(s) {
       known[s.key] = true
-      if (s.trackingNumber) known["dhl:" + s.trackingNumber] = true
+      if (s.trackingNumber) Shipments.carrierKeys(s.trackingNumber).forEach(function(k) { known[k] = true })
     })
     var queued = queuedAdds.filter(function(p) { return !known[Shipments.manualKey(p.id)] }).map(function(p) {
       return Shipments.queuedRow(p.id, p.at)
